@@ -1,5 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 import threading
+import asyncio
+
+from app.utils.metrics_generator import metrics, update_metrics
+from app.services.service_graph import simulate_failure, service_status
 
 from app.utils.metrics_generator import metrics, update_metrics
 
@@ -38,3 +42,16 @@ def incidents():
             "severity": "high"
         }
     return {"incident": "No active incidents"}
+
+@app.get("/simulate-cascade")
+def simulate_cascade():
+    result = simulate_failure()
+    return result
+
+@app.websocket("/ws/metrics")
+async def websocket_metrics(websocket: WebSocket):
+    await websocket.accept()
+
+    while True:
+        await websocket.send_json(metrics)
+        await asyncio.sleep(2)
