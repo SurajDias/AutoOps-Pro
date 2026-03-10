@@ -1,4 +1,5 @@
 from fastapi import FastAPI, WebSocket
+from app.services.topology_service import get_topology
 import threading
 import asyncio
 
@@ -55,3 +56,7 @@ async def websocket_metrics(websocket: WebSocket):
     while True:
         await websocket.send_json(metrics)
         await asyncio.sleep(2)
+
+@app.get("/topology")
+def topology():
+    return get_topology()
