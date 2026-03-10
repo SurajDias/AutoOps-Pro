@@ -1,5 +1,7 @@
 from fastapi import FastAPI, WebSocket
 from app.services.topology_service import get_topology
+from app.services.health_service import update_service_health
+from app.utils.metrics_generator import metrics
 import threading
 import asyncio
 
@@ -60,3 +62,8 @@ async def websocket_metrics(websocket: WebSocket):
 @app.get("/topology")
 def topology():
     return get_topology()
+
+@app.get("/service-health")
+def service_health():
+    health = update_service_health()
+    return health
