@@ -1,7 +1,9 @@
-Frontend Development
+AutoOps Pro Frontend
 
-Modules:
-- Dashboard
-- Metrics visualization
+React dashboard for system monitoring.
+
+Features:
+- Metrics charts
+- Service topology graph
 - Incident viewer
-- What-if chat interface
+- Live WebSocket updates
