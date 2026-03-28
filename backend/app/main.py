@@ -1,29 +1,52 @@
 from fastapi import FastAPI, WebSocket
-from app.services.topology_service import get_topology
-from app.services.health_service import update_service_health
-from app.utils.metrics_generator import metrics
-from app.services.metrics_service import get_metrics_history
 import threading
 import asyncio
 
-from app.utils.metrics_generator import metrics, update_metrics
-from app.services.service_graph import simulate_failure, service_status
+# Services
+from app.services.topology_service import get_topology
+from app.services.health_service import update_service_health
+from app.services.metrics_service import get_metrics_history
+from app.services.service_graph import simulate_failure
+from app.models.anomaly_detector import detect_anomaly
 
+# Utils
 from app.utils.metrics_generator import metrics, update_metrics
+
+# ✅ ML ROUTES
+from app.routes import ml
+
+# ✅ SYSTEM ROUTE (ADD THIS)
+from app.routes import system
+
 
 app = FastAPI(title="AutoOps Pro API")
 
-# Start background metrics simulation
+# =========================
+# INCLUDE ROUTES
+# =========================
+app.include_router(ml.router)
+app.include_router(system.router)   # ✅ ADD THIS
+
+
+# =========================
+# BACKGROUND METRICS THREAD
+# =========================
 thread = threading.Thread(target=update_metrics, daemon=True)
 thread.start()
 
+
+# =========================
+# BASIC ROUTES
+# =========================
 @app.get("/")
 def home():
     return {"message": "AutoOps Pro Backend Running"}
 
+
 @app.get("/metrics")
 def get_metrics():
     return metrics
+
 
 @app.get("/prediction")
 def prediction():
@@ -38,6 +61,7 @@ def prediction():
             "confidence": "92%"
         }
 
+
 @app.get("/incidents")
 def incidents():
     if metrics["memory_usage"] > 85:
@@ -47,11 +71,15 @@ def incidents():
         }
     return {"incident": "No active incidents"}
 
+
 @app.get("/simulate-cascade")
 def simulate_cascade():
-    result = simulate_failure()
-    return result
+    return simulate_failure()
 
+
+# =========================
+# WEBSOCKET
+# =========================
 @app.websocket("/ws/metrics")
 async def websocket_metrics(websocket: WebSocket):
     await websocket.accept()
@@ -60,15 +88,41 @@ async def websocket_metrics(websocket: WebSocket):
         await websocket.send_json(metrics)
         await asyncio.sleep(2)
 
+
+# =========================
+# SYSTEM INFO ROUTES
+# =========================
 @app.get("/topology")
 def topology():
     return get_topology()
 
+
 @app.get("/service-health")
 def service_health():
-    health = update_service_health()
-    return health
+    return update_service_health()
+
 
 @app.get("/metrics/history")
 def metrics_history(service: str = None, limit: int = 50):
     return get_metrics_history(service, limit)
+
+
+@app.get("/metrics/live-with-anomaly")
+def live_metrics_with_anomaly():
+    current = metrics
+
+    detection_input = {
+        "cpu": current.get("cpu_usage", 0),
+        "memory": current.get("memory_usage", 0),
+        "response_time": current.get("response_time", 0),
+        "requests": current.get("requests_per_sec", 0),
+        "error_rate": current.get("error_rate", 0),
+        "latency": current.get("latency", 0)
+    }
+
+    result = detect_anomaly(detection_input)
+
+    return {
+        "metrics": current,
+        "anomaly": result
+    }
