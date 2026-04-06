@@ -6,7 +6,7 @@ import Predictions from './pages/Predictions/Predictions';
 import Incidents from './pages/Incidents/Incidents';
 import ServiceMap from './pages/ServiceMap/ServiceMap';
 import AISimulator from './pages/AISimulator/AISimulator';
-import Logs from './pages/Logs/Logs';
+//import Logs from './pages/Logs/Logs';
 import Login from './pages/Auth/Login';
 import Signup from './pages/Auth/Signup';
 import AIInitialization from './pages/Auth/AIInitialization';
@@ -48,7 +48,6 @@ function AppRoutes() {
         <Route path="incidents" element={<Incidents />} />
         <Route path="service-map" element={<ServiceMap />} />
         <Route path="ai-simulator" element={<AISimulator />} />
-        <Route path="logs" element={<Logs />} />
       </Route>
 
       {/* Catch all */}

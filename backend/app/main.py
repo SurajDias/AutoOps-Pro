@@ -1,4 +1,6 @@
+from app.routes import simulator
 from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 import threading
 import asyncio
 
@@ -12,20 +14,30 @@ from app.models.anomaly_detector import detect_anomaly
 # Utils
 from app.utils.metrics_generator import metrics, update_metrics
 
-# ✅ ML ROUTES
+# Routes
 from app.routes import ml
-
-# ✅ SYSTEM ROUTE (ADD THIS)
 from app.routes import system
 
 
 app = FastAPI(title="AutoOps Pro API")
 
 # =========================
+# ✅ CORS FIX (IMPORTANT)
+# =========================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # allow frontend (localhost:5173)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# =========================
 # INCLUDE ROUTES
 # =========================
 app.include_router(ml.router)
-app.include_router(system.router)   # ✅ ADD THIS
+app.include_router(system.router)
+app.include_router(simulator.router)
 
 
 # =========================

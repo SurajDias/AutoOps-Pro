@@ -5,27 +5,36 @@ from datetime import datetime
 
 services = ["payment", "order", "user", "inventory"]
 
+# 🔥 STARTING VALUES (stable baseline)
 metrics = {
-    "cpu": 0,
-    "memory": 0,
-    "response_time": 0,
-    "requests": 0,
-    "error_rate": 0,
-    "latency": 0
+    "cpu": 70,
+    "memory": 75,
+    "response_time": 150,
+    "requests": 250,
+    "error_rate": 1,
+    "latency": 120
 }
 
 CSV_FILE = "system_metrics.csv"
 
 
+# 🔥 SMOOTH CHANGE FUNCTION
+def fluctuate(value, min_val, max_val, step=5):
+    change = random.randint(-step, step)
+    new_val = value + change
+    return max(min_val, min(max_val, new_val))
+
+
 def generate_metrics():
     service = random.choice(services)
 
-    metrics["cpu"] = random.randint(20, 95)
-    metrics["memory"] = random.randint(30, 95)
-    metrics["response_time"] = random.randint(80, 900)
-    metrics["requests"] = random.randint(100, 500)
-    metrics["error_rate"] = random.randint(0, 3)
-    metrics["latency"] = random.randint(10, 150)
+    # 🔥 SMOOTH UPDATES (NOT RANDOM JUMPS)
+    metrics["cpu"] = fluctuate(metrics["cpu"], 20, 95)
+    metrics["memory"] = fluctuate(metrics["memory"], 30, 95)
+    metrics["response_time"] = fluctuate(metrics["response_time"], 80, 900, step=20)
+    metrics["requests"] = fluctuate(metrics["requests"], 100, 500, step=30)
+    metrics["error_rate"] = fluctuate(metrics["error_rate"], 0, 5, step=1)
+    metrics["latency"] = fluctuate(metrics["latency"], 50, 200, step=10)
 
     return {
         "timestamp": datetime.now().strftime("%H:%M:%S"),
