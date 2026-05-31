@@ -206,7 +206,7 @@ class WhatIfSimulator:
 
     # ─── Decision Engine (NEW) ────────────────────────────────────────────────
 
-    def _select_best_action(self, metrics: dict, root_cause: dict) -> dict:
+    def _select_best_action(self, metrics: dict, root_cause: dict, anomaly: bool = False) -> dict:
         """
         Autonomous decision engine.
 
@@ -221,6 +221,7 @@ class WhatIfSimulator:
         Args:
             metrics:    live system metrics (keys: cpu, memory, latency, error_rate)
             root_cause: output from analyze_root_cause()
+            anomaly:    current anomaly flag from the detection engine
 
         Returns:
             { action, confidence (0–100), risk, reason }
@@ -232,8 +233,28 @@ class WhatIfSimulator:
         error_rate = float(metrics.get("error_rate", 1))                           
 
         primary_issue = root_cause.get("primary_issue", "None")
+        summary       = root_cause.get("summary", "System Normal")
         severity      = root_cause.get("severity",      root_cause.get("status", "medium"))
         rc_confidence = root_cause.get("confidence",    50)
+
+        healthy_root_cause = (
+            str(summary).lower() == "system normal"
+            and str(primary_issue).lower() in ("none", "n/a", "")
+        )
+        within_warning_thresholds = (
+            cpu <= 60
+            and memory <= 75
+            and latency <= 120
+            and error_rate <= 1
+        )
+
+        if not anomaly and healthy_root_cause and within_warning_thresholds:
+            return {
+                "action":     "monitor",
+                "confidence": 100,
+                "risk":       "Low",
+                "reason":     "System operating within normal thresholds. Continue monitoring.",
+            }
 
         # ── Score each action ─────────────────────────────────────────────────
         scores = {
