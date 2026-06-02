@@ -1,24 +1,31 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { FiActivity } from 'react-icons/fi';
+import { FiActivity, FiCheckCircle, FiCpu, FiDatabase, FiRefreshCw, FiTrendingUp } from 'react-icons/fi';
 import MetricCard from '../../components/cards/MetricCard';
 import GaugeCard from '../../components/cards/GaugeCard';
 import SystemHealthCard from '../../components/cards/SystemHealthCard';
 
-const Dashboard: React.FC = () => {
-  const navigate = useNavigate();
+const API_URL = 'http://127.0.0.1:8000';
 
+const demoScenarios = [
+  { key: 'normal', label: 'Normal', icon: FiCheckCircle },
+  { key: 'traffic_spike', label: 'Traffic Spike', icon: FiTrendingUp },
+  { key: 'database_stress', label: 'DB Stress', icon: FiDatabase },
+  { key: 'memory_leak', label: 'Memory Leak', icon: FiCpu },
+  { key: 'fixed', label: 'Apply Fix', icon: FiRefreshCw },
+];
+
+const Dashboard: React.FC = () => {
   const [systemStatus, setSystemStatus] = useState<any>(null);
   const [metrics, setMetrics]           = useState<any>(null);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const statusRes  = await fetch("http://127.0.0.1:8000/system-status");
+        const statusRes  = await fetch(`${API_URL}/system-status`);
         const statusData = await statusRes.json();
         setSystemStatus(statusData);
 
-        const metricsRes  = await fetch("http://127.0.0.1:8000/metrics");
+        const metricsRes  = await fetch(`${API_URL}/metrics`);
         const metricsData = await metricsRes.json();
         setMetrics(metricsData);
       } catch (err) {
@@ -30,6 +37,14 @@ const Dashboard: React.FC = () => {
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  const activateScenario = async (name: string) => {
+    await fetch(`${API_URL}/demo/scenario/${name}`, { method: 'POST' });
+    const statusRes = await fetch(`${API_URL}/system-status`);
+    setSystemStatus(await statusRes.json());
+    const metricsRes = await fetch(`${API_URL}/metrics`);
+    setMetrics(await metricsRes.json());
+  };
 
   return (
     <div className="space-y-6">
@@ -54,8 +69,53 @@ const Dashboard: React.FC = () => {
         </button>
       </header>
 
+      <section className="bg-card p-4 rounded-xl border border-white/10 text-white">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-text-muted">Demo Control Plane</h2>
+            <p className="text-base font-semibold text-white mt-1">
+              {systemStatus?.scenario?.label || 'Loading scenario'}
+            </p>
+            <p className="text-sm text-text-secondary">
+              {systemStatus?.scenario?.description || 'Select a scenario to drive the live metrics.'}
+            </p>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            {demoScenarios.map((scenario) => (
+              <button
+                key={scenario.key}
+                onClick={() => activateScenario(scenario.key)}
+                className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center justify-center gap-2 transition-colors ${
+                  systemStatus?.scenario?.name === scenario.key
+                    ? 'bg-accent text-black border-accent'
+                    : 'bg-white/5 text-text-secondary border-white/10 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                <scenario.icon size={14} />
+                {scenario.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* 🔥 BACKEND DATA DISPLAY */}
-      <div className="bg-card p-4 rounded-xl border border-white/10 text-white space-y-2">
+      <div className="bg-card p-4 rounded-xl border border-white/10 text-white space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="bg-background/40 rounded-lg p-3">
+            <p className="text-xs text-text-muted uppercase font-semibold">Failure Forecast</p>
+            <p className="text-sm text-white mt-1">{systemStatus?.prediction || "Analyzing..."}</p>
+          </div>
+          <div className="bg-background/40 rounded-lg p-3">
+            <p className="text-xs text-text-muted uppercase font-semibold">Time To Failure</p>
+            <p className="text-sm text-yellow-400 mt-1">{systemStatus?.time_to_failure || "..."}</p>
+          </div>
+          <div className="bg-background/40 rounded-lg p-3">
+            <p className="text-xs text-text-muted uppercase font-semibold">Incident Memory</p>
+            <p className="text-sm text-blue-300 mt-1">{systemStatus?.similar_incident || "..."}</p>
+          </div>
+        </div>
+
         <p>🔥 Status: <span className={`font-bold ${systemStatus?.status === "critical" ? "text-red-400" : "text-green-400"}`}>
           {systemStatus ? systemStatus.status : "Loading..."}
         </span></p>
@@ -112,6 +172,18 @@ const Dashboard: React.FC = () => {
         <p className="text-xs text-gray-400 italic">
           💬 {systemStatus?.reason || "Analyzing system state..."}
         </p>
+
+        <div className="bg-background/30 border border-white/5 rounded-lg p-3">
+          <p className="text-xs text-text-muted uppercase font-semibold mb-2">Explainability</p>
+          <ul className="space-y-1.5">
+            {(systemStatus?.explainability || []).map((reason: string) => (
+              <li key={reason} className="text-xs text-text-secondary flex gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-accent mt-1.5 shrink-0" />
+                {reason}
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
 
       {/* 🔥 LIVE METRICS — unchanged */}
@@ -132,9 +204,9 @@ const Dashboard: React.FC = () => {
           trend={{ value: 12.5, isPositive: true }}
           icon={<FiActivity size={20} />}
           chartData={[
-            { name: '1', value: metrics?.cpu     || 20 },
-            { name: '2', value: metrics?.memory  || 40 },
-            { name: '3', value: metrics?.latency || 60 },
+            { value: metrics?.cpu     || 20 },
+            { value: metrics?.memory  || 40 },
+            { value: metrics?.latency || 60 },
           ]}
           delay={0.2}
         />

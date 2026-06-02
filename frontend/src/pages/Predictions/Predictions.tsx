@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { FiAlertTriangle, FiClock, FiTrendingUp, FiCheckCircle, FiDatabase, FiServer, FiCpu, FiWifi, FiZap, FiInfo } from 'react-icons/fi';
 import GlassCard from '../../components/cards/GlassCard';
 import ChartCard from '../../components/cards/ChartCard';
 import CountdownTimer from '../../components/cards/CountdownTimer';
+
+const API_URL = 'http://127.0.0.1:8000';
 
 const predictions = [
   {
@@ -50,11 +52,46 @@ const getSeverityColor = (severity: string) => {
 
 const Predictions: React.FC = () => {
   const [simulatingId, setSimulatingId] = useState<number | null>(null);
+  const [liveStatus, setLiveStatus] = useState<any>(null);
+
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch(`${API_URL}/system-status`);
+        setLiveStatus(await res.json());
+      } catch (err) {
+        console.error('Failed to load live prediction state', err);
+      }
+    };
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 4000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSimulateFix = (id: number) => {
     setSimulatingId(id);
     setTimeout(() => setSimulatingId(null), 2500);
   };
+
+  const secondsFromForecast = (forecast?: string) => {
+    if (!forecast || forecast.includes('No failure')) return 7200;
+    const match = forecast.match(/(\d+)/);
+    return match ? Number(match[1]) * 60 : 900;
+  };
+
+  const livePrediction = liveStatus ? {
+    id: 0,
+    title: liveStatus.prediction || 'Live Failure Forecast',
+    service: liveStatus.service || 'payment',
+    initialSeconds: secondsFromForecast(liveStatus.time_to_failure),
+    confidence: liveStatus.confidence || 60,
+    severity: liveStatus.risk === 'Critical' || liveStatus.severity === 'High' ? 'critical' : liveStatus.severity === 'Medium' ? 'warning' : 'low',
+    recommendation: `${liveStatus.recommended_action || 'continue_monitoring'} - ${liveStatus.reason || 'AI is evaluating live metrics.'}`,
+    icon: liveStatus.primary_issue?.includes('Memory') ? FiCpu : liveStatus.primary_issue?.includes('Response') ? FiDatabase : FiServer,
+    reasons: liveStatus.explainability || ['Live metrics are being evaluated by the anomaly and root-cause engines.'],
+  } : null;
+
+  const displayedPredictions = livePrediction ? [livePrediction, ...predictions.slice(1)] : predictions;
 
   return (
     <div className="space-y-6">
@@ -92,7 +129,7 @@ const Predictions: React.FC = () => {
 
       {/* Prediction Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {predictions.map((pred, idx) => {
+        {displayedPredictions.map((pred, idx) => {
           const colors = getSeverityColor(pred.severity);
           const isSimulating = simulatingId === pred.id;
           return (
@@ -154,7 +191,7 @@ const Predictions: React.FC = () => {
                   <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Why This Is Predicted</span>
                 </div>
                 <ul className="space-y-1.5">
-                  {pred.reasons.map((reason, i) => (
+                  {pred.reasons.map((reason: string, i: number) => (
                     <motion.li key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.5 + i * 0.1 }} className="flex items-start gap-2 text-xs text-text-secondary">
                       <span className="w-1 h-1 rounded-full bg-text-muted mt-1.5 shrink-0" />
                       {reason}
