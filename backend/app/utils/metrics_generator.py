@@ -9,12 +9,12 @@ services = ["payment", "order", "user", "inventory"]
 
 # 🔥 STARTING VALUES (stable baseline)
 metrics = {
-    "cpu": 70,
-    "memory": 75,
-    "response_time": 150,
-    "requests": 250,
+    "cpu": 45,
+    "memory": 58,
+    "response_time": 105,
+    "requests": 220,
     "error_rate": 1,
-    "latency": 120
+    "latency": 90
 }
 
 CSV_FILE = "system_metrics.csv"

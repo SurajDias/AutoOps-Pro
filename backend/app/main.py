@@ -62,7 +62,7 @@ def get_metrics():
 
 @app.get("/prediction")
 def prediction():
-    if metrics["cpu_usage"] > 80:
+    if metrics["cpu"] > 80:
         return {
             "prediction": "Possible system overload in 10 minutes",
             "confidence": "87%"
@@ -76,7 +76,7 @@ def prediction():
 
 @app.get("/incidents")
 def incidents():
-    if metrics["memory_usage"] > 85:
+    if metrics["memory"] > 85:
         return {
             "incident": "Memory leak detected",
             "severity": "high"
@@ -124,10 +124,10 @@ def live_metrics_with_anomaly():
     current = metrics
 
     detection_input = {
-        "cpu": current.get("cpu_usage", 0),
-        "memory": current.get("memory_usage", 0),
+        "cpu": current.get("cpu", 0),
+        "memory": current.get("memory", 0),
         "response_time": current.get("response_time", 0),
-        "requests": current.get("requests_per_sec", 0),
+        "requests": current.get("requests", 0),
         "error_rate": current.get("error_rate", 0),
         "latency": current.get("latency", 0)
     }

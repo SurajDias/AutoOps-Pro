@@ -9,24 +9,25 @@ class FailurePredictor:
         response_time = data.get("response_time", 0)
         error_rate = data.get("error_rate", 0)
 
-        # Simple logic
-        if cpu > 90 or memory > 90:
+        latency = max(data.get("latency", 0), response_time)
+
+        if cpu >= 85 or memory >= 90 or latency >= 350 or error_rate >= 5:
             return {
                 "will_fail": True,
                 "confidence": 0.9,
                 "reason": "Critical resource usage"
             }
 
-        if response_time > 1500 or error_rate > 5:
+        if cpu > 60 or memory > 75 or latency > 120 or error_rate > 1:
             return {
-                "will_fail": True,
-                "confidence": 0.8,
-                "reason": "Service degradation detected"
+                "will_fail": False,
+                "confidence": 0.65,
+                "reason": "Service degradation requires attention"
             }
 
         return {
             "will_fail": False,
-            "confidence": 0.7,
+            "confidence": 0.9,
             "reason": "System stable"
         }
 

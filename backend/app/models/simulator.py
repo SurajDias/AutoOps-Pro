@@ -293,9 +293,22 @@ class WhatIfSimulator:
             scores["reduce_latency"]   += 0.25
         if "error"  in issue_lower: scores["restart_service"]  += 0.25
 
-        # ── Pick winner ───────────────────────────────────────────────────────
-        best_action = max(scores, key=scores.get)
-        best_score  = scores[best_action]
+        # ── Pick the action that directly addresses the selected root cause ───
+        root_cause_actions = {
+            "cpu": "scale_cpu",
+            "memory": "optimize_memory",
+            "slow": "reduce_latency",
+            "response": "reduce_latency",
+            "latency": "reduce_latency",
+            "error": "restart_service",
+        }
+        best_action = next(
+            (action for keyword, action in root_cause_actions.items() if keyword in issue_lower),
+            None,
+        )
+        if best_action is None:
+            best_action = "monitor" if max(scores.values()) == 0 else max(scores, key=scores.get)
+        best_score  = scores.get(best_action, 0.0)
         label       = self.ACTION_REGISTRY.get(best_action, {}).get("label", best_action)
 
         # ── Confidence: decisiveness of the winning score ─────────────────────
@@ -307,7 +320,8 @@ class WhatIfSimulator:
         # ── Risk from severity ────────────────────────────────────────────────
         risk_map = {
             "critical": "Critical", "high": "High",
-            "medium":   "Medium",   "low":  "Low", "normal": "Low"
+            "warning":  "Medium",   "medium": "Medium",
+            "low":      "Low",      "normal": "Low"
         }
         risk = risk_map.get(str(severity).lower(), "Medium")
 

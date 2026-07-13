@@ -140,7 +140,17 @@ class AnomalyDetector:
         """
         # ── Rule-based ────────────────────────────────────────────────────────
         rule_score, rule_reasons = self._rule_based_score(data)
-        rule_anomaly = rule_score > 0.6
+        cpu = float(data.get("cpu", 0))
+        memory = float(data.get("memory", 0))
+        latency = max(float(data.get("latency", 0)), float(data.get("response_time", 0)))
+        error_rate = float(data.get("error_rate", 0))
+        critical_breach = (
+            cpu >= 85
+            or memory >= 90
+            or latency >= 350
+            or error_rate >= 5
+        )
+        rule_anomaly = rule_score >= 0.5
 
         # ── ML model (if loaded) ──────────────────────────────────────────────
         ml_normalized = 0.0
@@ -166,7 +176,7 @@ class AnomalyDetector:
         anomaly_score = round(
             (rule_score * 0.60) + (ml_normalized * 0.40), 4
         )
-        is_anomaly = rule_anomaly or ml_anomaly or (anomaly_score > 0.50)
+        is_anomaly = critical_breach or rule_anomaly or ml_anomaly or (anomaly_score > 0.50)
 
         # ── Reason string ─────────────────────────────────────────────────────
         if rule_reasons:
