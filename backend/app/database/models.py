@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, DateTime
 from datetime import datetime
 
-from backend.app.database.postgres import Base
+from app.database.postgres import Base
 
 
 class Incident(Base):

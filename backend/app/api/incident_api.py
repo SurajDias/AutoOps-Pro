@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from backend.app.database.postgres import get_db
-from backend.app.database.models import Incident
-from backend.app.schemas.incident import IncidentCreate, IncidentUpdate
+from app.database.postgres import get_db
+from app.database.models import Incident
+from app.schemas.incident import IncidentCreate, IncidentUpdate
 
 router = APIRouter()
 

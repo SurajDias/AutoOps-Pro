@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from backend.app.api.incident_api import router as incident_router
+from app.api.incident_api import router as incident_router
 
 app = FastAPI(
     title="AutoOps Pro",
