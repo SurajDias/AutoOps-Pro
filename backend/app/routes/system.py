@@ -1,5 +1,13 @@
 from fastapi import APIRouter
-from app.utils.metrics_generator import SCENARIOS, get_recent_metrics, get_scenario, metrics, set_scenario
+from app.utils.metrics_generator import (
+    SCENARIOS,
+    get_metrics_mode,
+    get_recent_metrics,
+    get_scenario,
+    metrics,
+    set_metrics_mode,
+    set_scenario,
+)
 from app.models.anomaly_detector import detect_anomaly
 from app.models.root_cause import analyze_root_cause
 from app.models.failure_prediction import failure_predictor
@@ -211,10 +219,27 @@ def demo_scenarios():
     }
 
 
+@router.get("/metrics/mode")
+def metrics_mode():
+    """Return the active source without altering the existing metrics payload."""
+    return {"mode": get_metrics_mode()}
+
+
+@router.post("/metrics/mode/{mode}")
+def change_metrics_mode(mode: str):
+    active_mode = set_metrics_mode(mode)
+    if active_mode is None:
+        return {"success": False, "message": f"Unknown metrics mode '{mode}'"}
+
+    return {"success": active_mode == mode, "mode": active_mode}
+
+
 @router.post("/demo/scenario/{name}")
 def activate_demo_scenario(name: str):
     global _last_recorded_incident
 
+    # Existing dashboard controls should always resume the demo source.
+    set_metrics_mode("demo")
     scenario = set_scenario(name)
     if scenario is None:
         return {"success": False, "message": f"Unknown scenario '{name}'"}

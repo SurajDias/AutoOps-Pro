@@ -5,6 +5,11 @@ from collections import deque
 from datetime import datetime
 from threading import Lock
 
+try:
+    import psutil
+except ImportError:  # The backend must remain usable without the optional collector.
+    psutil = None
+
 services = ["payment", "order", "user", "inventory"]
 
 # 🔥 STARTING VALUES (stable baseline)
@@ -20,6 +25,9 @@ metrics = {
 CSV_FILE = "system_metrics.csv"
 _lock = Lock()
 _metrics_history = deque(maxlen=30)
+_metrics_mode = "demo"
+_last_network_io = None
+_last_disk_io = None
 _scenario = {
     "name": "normal",
     "label": "Normal operations",
@@ -93,7 +101,43 @@ def set_scenario(name):
 
 def get_scenario():
     with _lock:
+        if _metrics_mode == "live":
+            return {
+                "name": "live",
+                "label": "Live laptop metrics",
+                "description": "Metrics collected from this machine.",
+                "service": "local-system",
+            }
         return dict(_scenario)
+
+
+def get_metrics_mode():
+    with _lock:
+        return _metrics_mode
+
+
+def set_metrics_mode(mode):
+    """Select the source used by the existing metrics update loop.
+
+    Live collection is optional: if psutil is missing, retain demo mode instead
+    of allowing an unavailable dependency to affect backend startup or requests.
+    """
+    global _metrics_mode, _last_network_io, _last_disk_io
+
+    if mode not in ("demo", "live"):
+        return None
+
+    with _lock:
+        if mode == "live" and psutil is None:
+            _metrics_mode = "demo"
+            return _metrics_mode
+
+        _metrics_mode = mode
+        if mode == "live":
+            # Establish I/O baselines without adding another polling loop.
+            _last_network_io = None
+            _last_disk_io = None
+        return _metrics_mode
 
 
 def get_recent_metrics(limit=12):
@@ -136,6 +180,78 @@ def generate_metrics():
     }
 
 
+def generate_live_metrics():
+    """Map local-system readings onto the established AI metric contract.
+
+    The pipeline expects service-style values, so CPU and memory retain their
+    native percentages while disk pressure, I/O throughput, and process count
+    are folded into its existing latency/response/request fields. There is no
+    trustworthy host-level equivalent of application errors, therefore
+    ``error_rate`` remains zero rather than fabricating failures.
+    """
+    global _last_network_io, _last_disk_io
+
+    if psutil is None:
+        raise RuntimeError("psutil is unavailable")
+
+    cpu = round(float(psutil.cpu_percent(interval=None)), 2)
+    memory = round(float(psutil.virtual_memory().percent), 2)
+    disk = round(float(psutil.disk_usage("/").percent), 2)
+    network_io = psutil.net_io_counters()
+    disk_io = psutil.disk_io_counters()
+    process_count = len(psutil.pids())
+
+    with _lock:
+        previous_network = _last_network_io
+        previous_disk = _last_disk_io
+        _last_network_io = network_io
+        _last_disk_io = disk_io
+
+    # Delta values are sampled only on the existing two-second update flow.
+    network_bytes = 0 if previous_network is None else max(
+        0,
+        (network_io.bytes_sent + network_io.bytes_recv)
+        - (previous_network.bytes_sent + previous_network.bytes_recv),
+    )
+    disk_bytes = 0 if previous_disk is None else max(
+        0,
+        (disk_io.read_bytes + disk_io.write_bytes)
+        - (previous_disk.read_bytes + previous_disk.write_bytes),
+    )
+    network_kib = network_bytes / 1024
+    disk_kib = disk_bytes / 1024
+
+    # These derived fields preserve the API consumed by the existing AI modules.
+    activity = min(100, (network_kib / 100) + (disk_kib / 250))
+    latency = round(max(1, 15 + (cpu * 0.65) + (memory * 0.30) + (disk * 0.15) + (activity * 0.2)), 2)
+    response_time = round(latency + (disk * 0.25), 2)
+    requests = int(process_count + network_kib)
+
+    snapshot = {
+        "cpu": cpu,
+        "memory": memory,
+        "response_time": response_time,
+        "requests": requests,
+        "error_rate": 0,
+        "latency": latency,
+    }
+    with _lock:
+        metrics.update(snapshot)
+        _metrics_history.append({
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
+            "cpu": cpu,
+            "memory": memory,
+            "latency": latency,
+        })
+
+    return {
+        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "service": "local-system",
+        "scenario": "live",
+        **snapshot,
+    }
+
+
 def save_metrics_to_csv(data):
     file_exists = False
 
@@ -168,6 +284,12 @@ def save_metrics_to_csv(data):
 
 def update_metrics():
     while True:
-        data = generate_metrics()
+        try:
+            data = generate_live_metrics() if get_metrics_mode() == "live" else generate_metrics()
+        except Exception:
+            # Collection failures are intentionally non-fatal and immediately
+            # return the shared pipeline to its known-good demo source.
+            set_metrics_mode("demo")
+            data = generate_metrics()
         save_metrics_to_csv(data)
         time.sleep(2)
