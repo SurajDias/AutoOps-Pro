@@ -1,14 +1,16 @@
-from app.routes import simulator
+import asyncio
+import threading
+
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-import threading
-import asyncio
 
 # Services
 from app.services.topology_service import get_topology
 from app.services.health_service import update_service_health
 from app.services.metrics_service import get_metrics_history
 from app.services.service_graph import simulate_failure
+
+# Models
 from app.models.anomaly_detector import detect_anomaly
 
 # Utils
@@ -16,17 +18,24 @@ from app.utils.metrics_generator import metrics, update_metrics
 
 # Routes
 from app.routes import ml
+from app.routes import simulator
 from app.routes import system
 
+# Incident Management API
+from app.api.incident_api import router as incident_router
 
-app = FastAPI(title="AutoOps Pro API")
+
+app = FastAPI(
+    title="AutoOps Pro API",
+    version="1.0.0"
+)
 
 # =========================
-# ✅ CORS FIX (IMPORTANT)
+# CORS
 # =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # allow frontend (localhost:5173)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,6 +48,11 @@ app.include_router(ml.router)
 app.include_router(system.router)
 app.include_router(simulator.router)
 
+app.include_router(
+    incident_router,
+    prefix="/incidents",
+    tags=["Incident Management"]
+)
 
 # =========================
 # BACKGROUND METRICS THREAD
@@ -46,13 +60,14 @@ app.include_router(simulator.router)
 thread = threading.Thread(target=update_metrics, daemon=True)
 thread.start()
 
-
 # =========================
 # BASIC ROUTES
 # =========================
 @app.get("/")
 def home():
-    return {"message": "AutoOps Pro Backend Running"}
+    return {
+        "message": "Welcome to AutoOps Pro"
+    }
 
 
 @app.get("/metrics")
@@ -67,11 +82,11 @@ def prediction():
             "prediction": "Possible system overload in 10 minutes",
             "confidence": "87%"
         }
-    else:
-        return {
-            "prediction": "System stable",
-            "confidence": "92%"
-        }
+
+    return {
+        "prediction": "System stable",
+        "confidence": "92%"
+    }
 
 
 @app.get("/incidents")
@@ -81,7 +96,10 @@ def incidents():
             "incident": "Memory leak detected",
             "severity": "high"
         }
-    return {"incident": "No active incidents"}
+
+    return {
+        "incident": "No active incidents"
+    }
 
 
 @app.get("/simulate-cascade")
@@ -129,12 +147,12 @@ def live_metrics_with_anomaly():
         "response_time": current.get("response_time", 0),
         "requests": current.get("requests", 0),
         "error_rate": current.get("error_rate", 0),
-        "latency": current.get("latency", 0)
+        "latency": current.get("latency", 0),
     }
 
     result = detect_anomaly(detection_input)
 
     return {
         "metrics": current,
-        "anomaly": result
+        "anomaly": result,
     }
