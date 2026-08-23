@@ -1,27 +1,31 @@
-import React from 'react';
-import { Outlet } from 'react-router-dom';
-import Navbar from '../navbar/Navbar';
-import Sidebar from '../sidebar/Sidebar';
+import { Outlet, useLocation } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
+import Navbar from './Navbar';
+import Sidebar from './Sidebar';
 import PageTransition from './PageTransition';
+import { CursorSpotlight } from '../common/CursorSpotlight';
+import { CommandPalette } from '../common/CommandPalette';
+import { ToastContainer } from '../common/ToastContainer';
 
-const Layout: React.FC = () => {
+export default function Layout() {
+  const location = useLocation();
+
   return (
-    <div className="flex bg-background min-h-screen text-text-primary font-sans selection:bg-accent/30 selection:text-white">
-      <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0">
-        <Navbar />
-        <main className="flex-1 overflow-x-hidden p-6 relative">
-          {/* Subtle background glow effect */}
-          <div className="absolute top-0 left-1/4 w-96 h-96 bg-accent/5 rounded-full blur-[120px] pointer-events-none -z-10"></div>
-          <div className="absolute bottom-1/4 right-0 w-96 h-96 bg-blue-500/5 rounded-full blur-[120px] pointer-events-none -z-10"></div>
-          
-          <PageTransition>
-            <Outlet />
-          </PageTransition>
+    <div className="min-h-screen bg-background text-text-primary font-body flex flex-col selection:bg-primary/30 selection:text-white">
+      <CursorSpotlight />
+      <Navbar />
+      <div className="flex flex-1 overflow-hidden relative">
+        <Sidebar />
+        <main className="flex-1 overflow-y-auto overflow-x-hidden relative min-h-0">
+          <AnimatePresence mode="wait" initial={false}>
+            <PageTransition key={location.pathname}>
+              <Outlet />
+            </PageTransition>
+          </AnimatePresence>
         </main>
       </div>
+      <CommandPalette />
+      <ToastContainer />
     </div>
   );
-};
-
-export default Layout;
+}
