@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { FiActivity, FiAlertTriangle, FiGrid, FiMap, FiMessageSquare, FiTrendingUp, FiFileText, FiLogOut } from 'react-icons/fi';
+import { FiActivity, FiAlertTriangle, FiGrid, FiMap, FiMessageSquare, FiTrendingUp, FiLogOut } from 'react-icons/fi';
 import { motion } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 
@@ -13,7 +13,6 @@ const Sidebar: React.FC = () => {
     { icon: FiAlertTriangle, label: 'Incidents', path: '/incidents' },
     { icon: FiMap, label: 'Service Map', path: '/service-map' },
     { icon: FiMessageSquare, label: 'AI Simulator', path: '/ai-simulator' },
-    { icon: FiFileText, label: 'Logs', path: '/logs' },
   ];
 
   const handleLogout = () => { logout(); navigate('/login'); };

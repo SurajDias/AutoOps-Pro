@@ -48,6 +48,26 @@ export default function Predictions() {
     }
   };
 
+  const secondsFromForecast = (forecast?: string) => {
+    if (!forecast || forecast.includes('No failure')) return 7200;
+    const match = forecast.match(/(\d+)/);
+    return match ? Number(match[1]) * 60 : 900;
+  };
+
+  const livePrediction = liveStatus ? {
+    id: 0,
+    title: liveStatus.prediction || 'Live Failure Forecast',
+    service: liveStatus.service || 'payment',
+    initialSeconds: secondsFromForecast(liveStatus.time_to_failure),
+    confidence: liveStatus.confidence || 60,
+    severity: liveStatus.risk === 'Critical' || liveStatus.severity === 'High' ? 'critical' : liveStatus.severity === 'Medium' ? 'warning' : 'low',
+    recommendation: `${liveStatus.recommended_action || 'continue_monitoring'} - ${liveStatus.reason || 'AI is evaluating live metrics.'}`,
+    icon: liveStatus.primary_issue?.includes('Memory') ? FiCpu : liveStatus.primary_issue?.includes('Response') ? FiDatabase : FiServer,
+    reasons: liveStatus.explainability || ['Live metrics are being evaluated by the anomaly and root-cause engines.'],
+  } : null;
+
+  const displayedPredictions = livePrediction ? [livePrediction, ...predictions.slice(1)] : predictions;
+
   return (
     <div className="p-8 bg-background min-h-screen text-text-primary">
       <div className="max-w-7xl mx-auto space-y-6">

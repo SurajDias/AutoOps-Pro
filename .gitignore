@@ -1,8 +1,15 @@
+# Python virtual environments
+.venv/
+venv/
+backend/venv/
+
+# Generated metrics
+system_metrics.csv
+backend/system_metrics.csv
+
+# Python cache
 __pycache__/
 *.pyc
-node_modules/
+
+# Environment files
 .env
-venv/
-dist/
-build/
-.DS_Store

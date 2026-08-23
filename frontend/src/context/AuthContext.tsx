@@ -19,11 +19,11 @@ export const useAuth = () => {
 };
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('autoops_auth') === 'true');
-  const [isInitialized, setIsInitialized] = useState(() => localStorage.getItem('autoops_init') === 'true');
+  const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('autoops_auth') !== 'false');
+  const [isInitialized, setIsInitialized] = useState(() => localStorage.getItem('autoops_init') !== 'false');
   const [user, setUser] = useState<{ email: string } | null>(() => {
     const stored = localStorage.getItem('autoops_user');
-    return stored ? JSON.parse(stored) : null;
+    return stored ? JSON.parse(stored) : { email: 'demo@autoops.ai' };
   });
 
   useEffect(() => {
