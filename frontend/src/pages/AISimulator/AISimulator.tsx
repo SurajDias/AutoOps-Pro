@@ -1,138 +1,30 @@
-import { useState } from 'react';
-import { motion } from 'framer-motion';
-import { Send, Bot, User, Zap } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Play, RefreshCw, Sparkles } from 'lucide-react';
+import { api, formatConfidence, type Metrics, type SimulationResult, type SystemStatus } from '../../services/api';
+
+const actions = [
+  ['scale_cpu', 'Vertical CPU Scaling'], ['scale_horizontal', 'Horizontal Scaling (Add Instances)'],
+  ['reduce_latency', 'Request Queue Optimization & Caching'], ['restart_service', 'Graceful Service Restart'],
+  ['optimize_memory', 'Memory Leak Fix & GC Tuning'], ['throttle_requests', 'Rate Limiting & Request Throttling'],
+] as const;
 
 export default function AISimulator() {
-  const [messages, setMessages] = useState<{ role: 'user' | 'ai', text: string, confidence?: number }[]>([
-    { role: 'ai', text: 'Hello. I am the AutoOps AI assistant. How can I help you simulate a scenario today?', confidence: 99 }
-  ]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const scenarios = ['Database overload', 'Network latency spike', 'Memory leak', 'CPU saturation'];
-
-  const sendQuery = async (query: string) => {
-    if (!query.trim()) return;
-    setMessages(prev => [...prev, { role: 'user', text: query }]);
-    setInput('');
-    setLoading(true);
-
-    try {
-      // Preserving original fetch path and simulation API call
-      const res = await fetch('http://127.0.0.1:8000/simulate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query })
-      });
-      const data = res.ok ? await res.json() : { response: 'Simulated response: Detected anomaly matching scenario. Initiating auto-scaling procedures.', confidence: 92 };
-      setMessages(prev => [...prev, { role: 'ai', text: data.response || data.message, confidence: data.confidence || 85 }]);
-    } catch (e) {
-      setMessages(prev => [...prev, { role: 'ai', text: 'Simulation server offline. Fallback: Simulating auto-remediation for ' + query, confidence: 80 }]);
-    }
-    setLoading(false);
-  };
-
-  return (
-    <div className="p-8 bg-background min-h-screen text-text-primary flex flex-col">
-      {/* Header */}
-      <div className="border-b border-white/[0.06] pb-5 mb-6">
-        <h1 className="text-2.5xl font-bold font-heading text-white tracking-tight">AI Ops Simulator</h1>
-        <p className="text-text-muted text-xs mt-1 leading-relaxed">
-          Test infrastructure response models by simulating failures and traffic patterns
-        </p>
-      </div>
-
-      {/* Scenario chips suggestion */}
-      <div className="flex flex-wrap gap-2.5 mb-6">
-        {scenarios.map(s => (
-          <button 
-            key={s} 
-            onClick={() => sendQuery(s)} 
-            className="px-4 py-2 bg-surface border border-white/[0.08] hover:border-primary/45 hover:bg-elevated/45 rounded-full text-xs font-semibold text-text-muted hover:text-white transition-all shadow-glass-sm"
-          >
-            {s}
-          </button>
-        ))}
-      </div>
-
-      {/* Main Terminal Chat Window */}
-      <div className="flex-1 bg-surface/60 border border-white/[0.08] rounded-2xl flex flex-col overflow-hidden shadow-glass min-h-[400px]">
-        {/* Messages Stream */}
-        <div className="flex-grow overflow-y-auto p-6 space-y-6 scrollbar-thin scrollbar-thumb-elevated">
-          {messages.map((msg, i) => {
-            const isUser = msg.role === 'user';
-            
-            return (
-              <motion.div 
-                key={i} 
-                initial={{ opacity: 0, y: 10 }} 
-                animate={{ opacity: 1, y: 0 }} 
-                transition={{ type: 'spring', stiffness: 350, damping: 25 }}
-                className={`flex items-start space-x-4 ${isUser ? 'flex-row-reverse space-x-reverse' : ''}`}
-              >
-                {/* Avatar Icon */}
-                <div className={`p-2.5 rounded-xl shrink-0 border ${
-                  isUser 
-                    ? 'bg-primary/10 border-primary/20 text-primary' 
-                    : 'bg-elevated border-white/[0.05] text-accent'
-                }`}>
-                  {isUser ? <User className="h-4.5 w-4.5" /> : <Bot className="h-4.5 w-4.5" />}
-                </div>
-
-                {/* Message Bubble */}
-                <div className={`max-w-[70%] p-4 rounded-2xl ${
-                  isUser 
-                    ? 'bg-primary text-background rounded-tr-none font-medium' 
-                    : 'bg-elevated/40 border border-white/[0.05] text-text-primary rounded-tl-none font-body'
-                }`}>
-                  <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.text}</p>
-                  
-                  {msg.confidence && (
-                    <div className={`mt-3 flex items-center space-x-1 text-[10px] font-semibold ${
-                      isUser ? 'text-background/80' : 'text-accent'
-                    }`}>
-                      <Zap className="h-3 w-3 fill-current" />
-                      <span>AI Confidence: {msg.confidence}%</span>
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            );
-          })}
-          
-          {/* Loading Indicator */}
-          {loading && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center space-x-2 text-primary p-1 pl-14">
-              <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" />
-              <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:0.2s]" />
-              <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:0.4s]" />
-            </motion.div>
-          )}
-        </div>
-
-        {/* Input Bar */}
-        <div className="p-4 border-t border-white/[0.08] bg-elevated/30">
-          <form 
-            onSubmit={e => { e.preventDefault(); sendQuery(input); }} 
-            className="relative flex items-center"
-          >
-            <input 
-              type="text" 
-              value={input} 
-              onChange={e => setInput(e.target.value)} 
-              placeholder="Describe a failure scenario to simulate..." 
-              className="w-full bg-background border border-white/[0.08] rounded-xl py-3.5 pl-5 pr-14 text-xs text-text-primary placeholder-text-muted/50 focus:outline-none focus:border-primary/45 focus:ring-1 focus:ring-primary/20 transition-all font-body" 
-            />
-            <button 
-              type="submit" 
-              disabled={!input.trim() || loading} 
-              className="absolute right-3.5 p-2 bg-primary text-background rounded-lg disabled:opacity-30 hover:bg-accent transition-colors"
-            >
-              <Send className="h-3.5 w-3.5 fill-current" />
-            </button>
-          </form>
-        </div>
-      </div>
-    </div>
-  );
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [action, setAction] = useState<string>('scale_cpu');
+  const [result, setResult] = useState<SimulationResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [simulating, setSimulating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const loadCurrentState = useCallback(async () => { setLoading(true); try { const [nextMetrics, nextStatus] = await Promise.all([api.getMetrics(), api.getSystemStatus()]); setMetrics(nextMetrics); setStatus(nextStatus); setError(null); } catch (requestError) { setMetrics(null); setStatus(null); setError(requestError instanceof Error ? requestError.message : 'Current state is unavailable.'); } finally { setLoading(false); } }, []);
+  useEffect(() => { void loadCurrentState(); }, [loadCurrentState]);
+  const simulate = async () => { if (!metrics || !status) return; setSimulating(true); setResult(null); try { const response = await api.simulateAction({ metrics: { cpu_usage: metrics.cpu, latency: metrics.latency }, action, context: { severity: status.severity, primary_issue: status.primary_issue, root_cause: status.root_cause } }); setResult(response.data); setError(null); } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Simulation is unavailable.'); } finally { setSimulating(false); } };
+  const selectedLabel = actions.find(([id]) => id === action)?.[1] || action;
+  return <div className="p-8 bg-background min-h-screen text-text-primary"><div className="max-w-6xl mx-auto space-y-6">
+    <header className="border-b border-white/[0.06] pb-5 flex flex-wrap gap-4 justify-between items-start"><div><h1 className="text-2.5xl font-bold font-heading text-white tracking-tight">What-If Remediation Simulator</h1><p className="text-text-muted text-xs mt-1">Evaluate the backend’s finite remediation actions against the current state.</p></div><span className="px-3 py-1.5 rounded-lg border border-accent/30 bg-accent/10 text-accent text-[10px] font-bold tracking-widest">SIMULATION ONLY</span></header>
+    {error && <div className="rounded-xl border border-white/15 bg-surface px-4 py-3 text-xs text-text-muted flex justify-between gap-3"><span>{error}</span><button onClick={() => void loadCurrentState()} className="text-primary font-semibold">Retry</button></div>}
+    <section className="grid lg:grid-cols-4 gap-4"><div className="lg:col-span-3 bg-surface/80 border border-white/[.08] rounded-2xl p-5"><div className="flex justify-between"><div><p className="text-[10px] text-text-muted uppercase tracking-widest">Current state</p><p className="mt-2 text-white font-semibold">{loading ? 'Loading current metrics…' : status?.primary_issue || 'No current diagnosis available'}</p></div><button onClick={() => void loadCurrentState()} title="Refresh current state" className="p-2 border border-white/[.08] rounded-lg text-text-muted"><RefreshCw className={'h-4 w-4 ' + (loading ? 'animate-spin' : '')} /></button></div>{metrics && status && <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs"><div><span className="text-text-muted">CPU</span><p className="text-white font-semibold">{metrics.cpu}%</p></div><div><span className="text-text-muted">Latency</span><p className="text-white font-semibold">{metrics.latency} ms</p></div><div><span className="text-text-muted">Risk</span><p className="text-white font-semibold">{status.risk}</p></div><div><span className="text-text-muted">Source</span><p className="text-white font-semibold">{status.scenario?.label ? 'Synthetic demo' : 'Current telemetry'}</p></div></div>}</div><div className="bg-surface/80 border border-white/[.08] rounded-2xl p-5"><p className="text-[10px] text-text-muted uppercase tracking-widest">Model context</p><p className="mt-2 text-white text-xs">Hybrid anomaly detection, weighted rule analysis, and deterministic simulation.</p></div></section>
+    <section className="grid lg:grid-cols-2 gap-6"><div className="bg-surface/80 border border-white/[.08] rounded-2xl p-5"><p className="text-[10px] text-text-muted uppercase tracking-widest">Select action</p><select value={action} onChange={event => setAction(event.target.value)} className="mt-3 w-full bg-background border border-white/[.1] rounded-xl p-3 text-sm text-white">{actions.map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select><p className="mt-3 text-xs text-text-muted">Selected action: <span className="text-white">{selectedLabel}</span></p><button onClick={() => void simulate()} disabled={!metrics || !status || simulating} className="mt-5 w-full py-3 rounded-xl bg-gradient-to-r from-primary to-accent text-background text-xs font-bold disabled:opacity-40 flex justify-center gap-2"><Play className="h-4 w-4 fill-current" />{simulating ? 'Simulating…' : 'Simulate selected action'}</button><p className="mt-3 text-[10px] text-text-muted">No infrastructure is changed by this request.</p></div>
+      <div className="bg-surface/80 border border-white/[.08] rounded-2xl p-5"><p className="text-[10px] text-text-muted uppercase tracking-widest">Expected result</p>{result ? <div className="mt-4 space-y-4 text-xs"><div className="flex items-center gap-2 text-accent"><Sparkles className="h-4 w-4" /><span className="font-semibold">SIMULATION RESULT</span></div><p className="text-white leading-relaxed">{result.explanation}</p><div className="grid grid-cols-2 gap-3"><div><span className="text-text-muted">Projected CPU</span><p className="text-white font-semibold">{result.updated_metrics.cpu_usage}%</p></div><div><span className="text-text-muted">Projected latency</span><p className="text-white font-semibold">{result.updated_metrics.latency} ms</p></div><div><span className="text-text-muted">Failure risk</span><p className="text-white font-semibold">{result.failure_risk}</p></div><div><span className="text-text-muted">Confidence</span><p className="text-white font-semibold">{result.confidence} · {formatConfidence(result.confidence_pct)}</p></div></div><div><span className="text-text-muted">Root cause context</span><p className="text-white mt-1">{result.root_cause}</p></div></div> : <div className="h-48 grid place-items-center text-center text-xs text-text-muted"><span>Choose an action to view its expected impact, risk, confidence, and explanation.</span></div>}</div></section>
+  </div></div>;
 }

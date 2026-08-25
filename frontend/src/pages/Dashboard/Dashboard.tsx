@@ -1,372 +1,93 @@
-import { useEffect, useState } from 'react';
-import { AreaChart, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Area } from 'recharts';
-import { Server, Activity, AlertTriangle, CheckCircle, Zap, Play, RotateCcw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Activity, AlertTriangle, BrainCircuit, Database, RefreshCw } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import Beams from '../../components/ui/Beams';
 import BorderGlow from '../../components/ui/BorderGlow';
+import { api, formatConfidence, type DemoScenario, type Incident, type IncidentStatistics, type MetricHistoryRow, type Metrics, type MetricsMode, type SystemStatus } from '../../services/api';
 
-const DEMO_METRICS = { uptime: '99.99%', latency: '45ms', incidents: 2, accuracy: '98.2%' };
-const DEMO_CHART = Array.from({ length: 24 }).map((_, i) => ({ 
-  time: `${i}:00`, 
-  cpu: Math.floor(Math.random() * 30 + 15), 
-  memory: Math.floor(Math.random() * 20 + 50), 
-  reqs: Math.floor(Math.random() * 800 + 400) 
-}));
-const DEMO_INCIDENTS = [
-  { id: 1, title: 'Database connection pool approaching limit', severity: 'High', status: 'Investigating', time: '10m ago' },
-  { id: 2, title: 'Elevated error rate in payment gateway API', severity: 'Critical', status: 'Mitigated', time: '25m ago' }
-];
+const statusTone = (status?: string) => status === 'critical' || status === 'Critical' ? 'text-white border-white/20 bg-white/10' : status === 'warning' || status === 'Warning' ? 'text-accent border-accent/20 bg-accent/10' : 'text-primary border-primary/20 bg-primary/10';
+const metricTone = (value: number, warning: number, critical: number) => value >= critical ? 'text-white' : value >= warning ? 'text-accent' : 'text-primary';
+const friendlyError = (error: unknown) => error instanceof Error ? error.message : 'Unable to load the operational command center.';
 
 export default function Dashboard() {
-  const [mode, setMode] = useState<'live' | 'demo' | null>(() => {
-    const saved = localStorage.getItem('autoops_live_mode');
-    if (saved === 'true') return 'live';
-    if (saved === 'false') return 'demo';
-    return null; // Force selection on first visit
-  });
+  const [mode, setMode] = useState<MetricsMode | null>(null);
+  const [scenarios, setScenarios] = useState<Record<string, DemoScenario>>({});
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [history, setHistory] = useState<MetricHistoryRow[]>([]);
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [incidentStats, setIncidentStats] = useState<IncidentStatistics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const [metrics, setMetrics] = useState(DEMO_METRICS);
-  const [chartData, setChartData] = useState(DEMO_CHART);
-  const [incidents, setIncidents] = useState(DEMO_INCIDENTS);
-  const [systemState, setSystemState] = useState('Healthy');
-
-  // Listen to global Navbar mode changes (preserve original logic)
-  useEffect(() => {
-    const handleModeChange = (e: any) => {
-      setMode(e.detail ? 'live' : 'demo');
-    };
-    window.addEventListener('autoops-mode-change', handleModeChange);
-    return () => window.removeEventListener('autoops-mode-change', handleModeChange);
+  const load = useCallback(async (signal?: AbortSignal, showRefresh = false) => {
+    if (showRefresh) setRefreshing(true);
+    try {
+      const [modeData, scenarioData, metricData, statusData, historyData, recentIncidents, statistics] = await Promise.all([
+        api.getMetricsMode(signal), api.getDemoScenarios(signal), api.getMetrics(signal), api.getSystemStatus(signal), api.getMetricsHistory(24, undefined, signal), api.getIncidentHistory(signal), api.getIncidentStatistics(signal),
+      ]);
+      setMode(modeData.mode); setScenarios(scenarioData); setMetrics(metricData); setStatus(statusData); setHistory(historyData); setIncidents(recentIncidents.slice(0, 5)); setIncidentStats(statistics); setLastUpdated(new Date()); setError(null);
+    } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
+      setMetrics(null); setStatus(null); setHistory([]); setIncidents([]); setIncidentStats(null); setError(friendlyError(requestError));
+    } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
+  const changeMode = useCallback(async (nextMode: MetricsMode) => {
+    setRefreshing(true);
+    try {
+      const result = await api.setMetricsMode(nextMode);
+      if (!result.success || !result.mode) throw new Error(result.message || 'The requested telemetry mode is unavailable.');
+      setMode(result.mode); localStorage.setItem('autoops_live_mode', String(result.mode === 'live'));
+      window.dispatchEvent(new CustomEvent('autoops-mode-synced', { detail: result.mode === 'live' }));
+      await load();
+    } catch (requestError) { setError(friendlyError(requestError)); setRefreshing(false); }
+  }, [load]);
+
   useEffect(() => {
-    if (!mode) return;
-    
-    // Sync to localstorage so Navbar switcher can read it
-    localStorage.setItem('autoops_live_mode', String(mode === 'live'));
+    const controller = new AbortController();
+    void load(controller.signal);
+    const interval = window.setInterval(() => void load(), 5000);
+    return () => { controller.abort(); window.clearInterval(interval); };
+  }, [load]);
 
-    if (mode === 'demo') {
-      setMetrics(DEMO_METRICS);
-      setChartData(DEMO_CHART);
-      setIncidents(DEMO_INCIDENTS);
-      setSystemState('Healthy');
-      return;
-    }
+  useEffect(() => {
+    const onMode = (event: Event) => void changeMode((event as CustomEvent<boolean>).detail ? 'live' : 'demo');
+    window.addEventListener('autoops-mode-change', onMode);
+    return () => window.removeEventListener('autoops-mode-change', onMode);
+  }, [changeMode]);
 
-    // Live mode fetching (preserves original API endpoints)
-    const fetchData = async () => {
-      try {
-        const [mRes, sRes, iRes] = await Promise.all([
-          fetch('http://127.0.0.1:8000/metrics').then(r => r.ok ? r.json() : null),
-          fetch('http://127.0.0.1:8000/system-status').then(r => r.ok ? r.json() : null),
-          fetch('http://127.0.0.1:8000/incidents').then(r => r.ok ? r.json() : null)
-        ]);
-        if (mRes) setMetrics(mRes);
-        if (sRes?.history) setChartData(sRes.history);
-        if (iRes?.incidents) setIncidents(iRes.incidents);
-        setSystemState(sRes?.status || 'Healthy');
-      } catch (e) {
-        console.warn("Backend unavailable, using demo fallback data", e);
-        setMode('demo');
-      }
-    };
-
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, [mode]);
-
-  const selectMode = (selected: 'live' | 'demo') => {
-    setMode(selected);
+  const activateScenario = async (name: string) => {
+    setRefreshing(true);
+    try {
+      const result = await api.activateDemoScenario(name);
+      if (!result.success) throw new Error(result.message || 'Unable to activate this demo scenario.');
+      setMode('demo'); localStorage.setItem('autoops_live_mode', 'false'); window.dispatchEvent(new CustomEvent('autoops-mode-synced', { detail: false }));
+      await load();
+    } catch (requestError) { setError(friendlyError(requestError)); setRefreshing(false); }
   };
 
-  // Configure telemetry mode selection screen
-  if (!mode) {
-    return (
-      <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center p-8 bg-[#060E1E] relative overflow-hidden">
-        {/* React Bits Beams animation background */}
-        <div className="absolute inset-0 z-0 opacity-45 pointer-events-none">
-          <Beams
-            beamWidth={2.5}
-            beamHeight={16}
-            beamNumber={12}
-            lightColor="#4F8BFF"
-            speed={1.5}
-            noiseIntensity={1.2}
-            scale={0.15}
-            rotation={15}
-          />
-        </div>
+  const telemetry = useMemo(() => metrics ? [
+    { label: 'CPU', value: `${metrics.cpu}%`, tone: metricTone(metrics.cpu, 60, 85) }, { label: 'Memory', value: `${metrics.memory}%`, tone: metricTone(metrics.memory, 75, 90) },
+    { label: 'Latency', value: `${metrics.latency} ms`, tone: metricTone(metrics.latency, 120, 350) }, { label: 'Response time', value: `${metrics.response_time} ms`, tone: metricTone(metrics.response_time, 120, 350) },
+    { label: 'Requests', value: String(metrics.requests), tone: 'text-primary' }, { label: 'Error rate', value: `${metrics.error_rate}%`, tone: metricTone(metrics.error_rate, 1, 5) },
+  ] : [], [metrics]);
+  const provenance = mode === 'live' ? 'Live host telemetry' : status?.scenario?.label ? `Synthetic demo · ${status.scenario.label}` : 'Synthetic demo telemetry';
 
-        {/* Glow Effects */}
-        <div className="absolute top-1/2 left-1/4 -translate-y-1/2 w-[350px] h-[350px] bg-primary/[0.05] rounded-full blur-[80px] pointer-events-none z-1" />
-        <div className="absolute top-1/2 right-1/4 -translate-y-1/2 w-[350px] h-[350px] bg-accent/[0.04] rounded-full blur-[80px] pointer-events-none z-1" />
-        
-        <div className="max-w-3xl w-full text-center space-y-10 relative z-10">
-          <div>
-            <h1 className="text-3xl md:text-4.5xl font-bold font-heading text-white tracking-tight mb-3">
-              Configure telemetry mode
-            </h1>
-            <p className="text-text-muted text-sm md:text-base max-w-xl mx-auto leading-relaxed">
-              Select how AutoOps Pro interfaces with your infrastructure metrics.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto">
-            
-            {/* Live Mode Selection Card */}
-            <button 
-              onClick={() => selectMode('live')}
-              className="p-7 rounded-2xl bg-surface/60 border border-white/[0.08] hover:border-primary/45 hover:bg-surface hover:shadow-neon flex flex-col text-left justify-between h-64 transition-all duration-300 group"
-            >
-              <div className="flex items-center justify-between w-full">
-                <div className="p-3 bg-primary/10 rounded-xl text-primary border border-primary/20">
-                  <Server className="h-5 w-5" />
-                </div>
-                <span className="w-2 h-2 bg-primary rounded-full animate-ping" />
-              </div>
-              <div className="space-y-1">
-                <h2 className="text-base font-heading font-semibold text-white">Live Production Mode</h2>
-                <p className="text-text-muted text-xs leading-relaxed">
-                  Stream real-time diagnostics directly from your locally configured host instances and FastAPI backends.
-                </p>
-              </div>
-              <div className="flex items-center space-x-1.5 text-xs font-semibold text-primary group-hover:translate-x-1 transition-transform">
-                <span>Connect API</span>
-                <Play className="h-2.5 w-2.5 fill-current" />
-              </div>
-            </button>
-
-            {/* Demo Mode Selection Card */}
-            <button 
-              onClick={() => selectMode('demo')}
-              className="p-7 rounded-2xl bg-surface/60 border border-white/[0.08] hover:border-accent/40 hover:bg-surface hover:shadow-neon-accent flex flex-col text-left justify-between h-64 transition-all duration-300 group"
-            >
-              <div className="flex items-center justify-between w-full">
-                <div className="p-3 bg-accent/10 rounded-xl text-accent border border-accent/20">
-                  <Activity className="h-5 w-5" />
-                </div>
-                <span className="w-2 h-2 bg-accent rounded-full opacity-60" />
-              </div>
-            <div className="space-y-1">
-              <h2 className="text-base font-heading font-semibold text-white">Synthetic Demo Mode</h2>
-              <p className="text-text-muted text-xs leading-relaxed">
-                Explore full platform capabilities pre-loaded with synthetic CSV diagnostic events and incident flows.
-              </p>
-            </div>
-            <div className="flex items-center space-x-1.5 text-xs font-semibold text-accent group-hover:translate-x-1 transition-transform">
-              <span>Run Simulator</span>
-              <Play className="h-2.5 w-2.5 fill-current" />
-            </div>
-          </button>
-
-        </div>
-      </div>
-    </div>
-  );
-}
-
-return (
-  <div className="p-8 bg-background/30 min-h-[calc(100vh-4rem)] text-text-primary overflow-y-auto relative">
-    {/* React Bits Beams background for main dashboard */}
-    <div className="absolute inset-0 z-0 opacity-35 pointer-events-none">
-      <Beams
-        beamWidth={2}
-        beamHeight={18}
-        beamNumber={8}
-        lightColor="#4F8BFF"
-        speed={1.0}
-        noiseIntensity={0.8}
-        scale={0.12}
-        rotation={12}
-      />
-    </div>
-
+  return <div className="p-8 bg-background/30 min-h-[calc(100vh-4rem)] text-text-primary overflow-y-auto relative">
+    <div className="absolute inset-0 z-0 opacity-35 pointer-events-none"><Beams beamWidth={2} beamHeight={18} beamNumber={8} lightColor="#4F8BFF" speed={1} noiseIntensity={0.8} scale={0.12} rotation={12} /></div>
     <div className="max-w-7xl mx-auto space-y-6 relative z-10">
-      
-      {/* Header Dashboard section */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-white/[0.06] pb-5">
-        <div>
-          <h1 className="text-2.5xl font-bold font-heading text-white tracking-tight">System overview</h1>
-          <div className="flex items-center gap-3 text-[10px] text-text-muted mt-1.5 font-mono">
-            <span className="flex items-center gap-1.5 text-accent">
-              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-              <span>Monitoring Active</span>
-            </span>
-            <span className="text-white/10">•</span>
-            <span>Last updated: just now</span>
-            <span className="text-white/10">•</span>
-            <span>Agent v2.1.0</span>
-            <span className="text-white/10">•</span>
-            <span className="uppercase">{mode === 'live' ? 'LIVE HOST' : 'SIMULATION'}</span>
-          </div>
-        </div>
-        
-        <div className="flex items-center space-x-3">
-          <button 
-            onClick={() => setMode(null)}
-            className="p-2 px-3.5 rounded-xl border border-white/[0.08] bg-surface text-text-muted text-xs font-semibold hover:text-white hover:bg-elevated transition-colors flex items-center space-x-2"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            <span>Change Mode</span>
-          </button>
-
-          <div className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl border font-semibold text-xs tracking-wider ${
-            systemState === 'Healthy' 
-              ? 'bg-accent/10 border-accent/20 text-accent' 
-              : 'bg-primary/10 border-primary/20 text-primary'
-          }`}>
-            <CheckCircle className="h-4 w-4" />
-            <span>SYSTEM: {systemState.toUpperCase()}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* KPI Strip Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        
-        {[
-          { label: 'Cluster Uptime', val: metrics.uptime, icon: Server, color: 'text-primary', bg: 'bg-primary/10', trend: '100% target', trendType: 'stable' },
-          { label: 'Avg Latency', val: metrics.latency, icon: Activity, color: 'text-accent', bg: 'bg-accent/10', trend: '-2.4ms vs last hr', trendType: 'good' },
-          { label: 'Active Alerts', val: metrics.incidents, icon: AlertTriangle, color: 'text-white', bg: 'bg-white/10', trend: '0 escalations', trendType: 'neutral' },
-          { label: 'AI confidence', val: metrics.accuracy, icon: Zap, color: 'text-accent', bg: 'bg-accent/10', trend: '+0.12% vs last run', trendType: 'good' }
-        ].map((item, idx) => (
-          <BorderGlow
-            key={idx}
-            glowSize={180}
-            glowOpacity={0.5}
-            className="shadow-glass"
-          >
-            <div className="p-5 relative overflow-hidden h-full flex flex-col justify-between min-h-[110px]">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-semibold text-text-muted tracking-widest uppercase">{item.label}</span>
-                <div className={`p-2 rounded-xl ${item.bg} ${item.color}`}>
-                  <item.icon className="h-4 w-4" />
-                </div>
-              </div>
-              <div className="flex items-baseline justify-between mt-2">
-                <div className="text-2xl font-heading font-bold text-white tracking-tight leading-none">{item.val}</div>
-                <span className={`text-[9px] font-semibold font-mono tracking-tight ${
-                  item.trendType === 'good' ? 'text-accent' :
-                  item.trendType === 'stable' ? 'text-primary' : 'text-text-muted'
-                }`}>
-                  {item.trend}
-                </span>
-              </div>
-            </div>
-          </BorderGlow>
-        ))}
-
-      </div>
-
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* Chart 1: Resource Utilization */}
-        <BorderGlow
-          glowSize={340}
-          glowOpacity={0.25}
-          className="shadow-glass"
-        >
-          <div className="p-5 h-[380px] flex flex-col justify-between">
-            <div className="mb-4">
-              <h2 className="text-base font-heading font-semibold text-white">Resource utilization</h2>
-              <p className="text-[10px] text-text-muted mt-0.5">CPU and Memory consumption percentage over time</p>
-            </div>
-            <div className="flex-1 min-h-0 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ left: -25, right: 10, bottom: 0, top: 10 }}>
-                  <defs>
-                    <linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#4F8BFF" stopOpacity={0.20}/>
-                      <stop offset="95%" stopColor="#4F8BFF" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorMem" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#63D6FF" stopOpacity={0.15}/>
-                      <stop offset="95%" stopColor="#63D6FF" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.02)" vertical={false} />
-                  <XAxis dataKey="time" stroke="rgba(255,255,255,0.3)" fontSize={9} tickLine={false} />
-                  <YAxis stroke="rgba(255,255,255,0.3)" fontSize={9} tickLine={false} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0D1728', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', fontSize: '11px' }} />
-                  <Area type="monotone" name="CPU" dataKey="cpu" stroke="#4F8BFF" strokeWidth={1.5} fillOpacity={1} fill="url(#colorCpu)" />
-                  <Area type="monotone" name="Memory" dataKey="memory" stroke="#63D6FF" strokeWidth={1.5} fillOpacity={1} fill="url(#colorMem)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </BorderGlow>
-
-        {/* Chart 2: Request Rate */}
-        <BorderGlow
-          glowSize={340}
-          glowOpacity={0.25}
-          className="shadow-glass"
-        >
-          <div className="p-5 h-[380px] flex flex-col justify-between">
-            <div className="mb-4">
-              <h2 className="text-base font-heading font-semibold text-white">Requests throughput</h2>
-              <p className="text-[10px] text-text-muted mt-0.5">Average request-per-second load rates</p>
-            </div>
-            <div className="flex-1 min-h-0 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ left: -20, right: 10, bottom: 0, top: 10 }}>
-                  <defs>
-                    <linearGradient id="colorReqs" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#63D6FF" stopOpacity={0.15}/>
-                      <stop offset="95%" stopColor="#63D6FF" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.02)" vertical={false} />
-                  <XAxis dataKey="time" stroke="rgba(255,255,255,0.3)" fontSize={9} tickLine={false} />
-                  <YAxis stroke="rgba(255,255,255,0.3)" fontSize={9} tickLine={false} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0D1728', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', fontSize: '11px' }} />
-                  <Area type="monotone" name="Requests" dataKey="reqs" stroke="#63D6FF" fillOpacity={1} fill="url(#colorReqs)" strokeWidth={1.5} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </BorderGlow>
-
-      </div>
-
-      {/* Incidents Stream */}
-      <div className="bg-surface/80 border border-white/[0.08] p-5 rounded-2xl shadow-glass">
-        <div className="flex justify-between items-center mb-5">
-          <div>
-            <h2 className="text-base font-heading font-semibold text-white">Telemetry incident log</h2>
-            <p className="text-[10px] text-text-muted mt-0.5">Active infrastructure events analyzed by models</p>
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          {incidents.map((inc: any, idx) => (
-            <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between bg-elevated/40 p-4.5 rounded-xl border border-white/[0.05] hover:border-primary/20 hover:bg-elevated/70 transition-all duration-300 gap-3">
-              <div className="space-y-1">
-                <h3 className="font-semibold text-white text-sm">{inc.title}</h3>
-                <div className="flex items-center space-x-3 text-[11px] text-text-muted">
-                  <span>Status: {inc.status}</span>
-                  <span className="w-1.5 h-1.5 bg-white/10 rounded-full" />
-                  <span>{inc.time}</span>
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-3">
-                {/* Preserved shades of blue/navy/white badges for severity */}
-                <span className={`px-2.5 py-1.5 rounded-lg text-[9px] font-bold font-heading uppercase border ${
-                  inc.severity === 'Critical' 
-                    ? 'bg-white/10 border-white/20 text-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' 
-                    : 'bg-primary/10 border-primary/20 text-primary'
-                }`}>
-                  {inc.severity}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
+      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-white/[0.06] pb-5"><div><h1 className="text-2.5xl font-bold font-heading text-white tracking-tight">Operations command center</h1><div className="flex flex-wrap items-center gap-2 mt-2 text-[10px] font-mono text-text-muted"><span className={`px-2 py-1 rounded border uppercase ${mode === 'live' ? 'text-primary border-primary/25 bg-primary/10' : 'text-accent border-accent/25 bg-accent/10'}`}>{mode || 'loading'} telemetry</span><span>{provenance}</span>{lastUpdated && <><span>•</span><span>Updated {lastUpdated.toLocaleTimeString()}</span></>}</div></div><div className="flex items-center gap-3"><button onClick={() => void load(undefined, true)} disabled={refreshing} className="p-2.5 rounded-xl border border-white/[0.08] bg-surface text-text-muted hover:text-white disabled:opacity-50" title="Refresh operational data"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /></button><div className={`px-3.5 py-2 rounded-xl border text-xs font-semibold uppercase tracking-wider ${statusTone(status?.severity)}`}>{status ? `${status.status} · ${formatConfidence(status.confidence)} confidence` : 'Status unavailable'}</div></div></header>
+      {error && <div className="rounded-xl border border-white/15 bg-surface/90 px-4 py-3 text-xs text-text-muted flex flex-wrap justify-between gap-3"><span>{error}</span><button onClick={() => void load(undefined, true)} className="text-primary font-semibold">Retry</button></div>}
+      {loading && !error && <div className="rounded-xl border border-white/[0.08] bg-surface/70 px-4 py-3 text-xs text-text-muted">Loading current telemetry and model analysis…</div>}
+      <section className="grid grid-cols-1 md:grid-cols-3 gap-4"><BorderGlow glowSize={180} glowOpacity={0.4}><div className="p-5 min-h-[135px]"><div className="flex justify-between"><span className="text-[10px] uppercase tracking-widest text-text-muted">System state</span><Activity className="h-4 w-4 text-primary" /></div><p className="mt-4 text-2xl font-bold font-heading text-white capitalize">{status?.status || 'Unavailable'}</p><p className="mt-1 text-xs text-text-muted">Severity: {status?.severity || '—'} · Risk: {status?.risk || '—'}</p></div></BorderGlow><BorderGlow glowSize={180} glowOpacity={0.4}><div className="p-5 min-h-[135px]"><div className="flex justify-between"><span className="text-[10px] uppercase tracking-widest text-text-muted">Anomaly detection</span><BrainCircuit className="h-4 w-4 text-accent" /></div><p className="mt-4 text-2xl font-bold font-heading text-white">{status ? status.anomaly ? 'Anomaly detected' : 'No anomaly detected' : 'Unavailable'}</p><p className="mt-1 text-xs text-text-muted">Score: {status ? formatConfidence(status.anomaly_score) : '—'} · Model/rule-derived</p></div></BorderGlow><BorderGlow glowSize={180} glowOpacity={0.4}><div className="p-5 min-h-[135px]"><div className="flex justify-between"><span className="text-[10px] uppercase tracking-widest text-text-muted">Incident context</span><AlertTriangle className="h-4 w-4 text-primary" /></div><p className="mt-4 text-2xl font-bold font-heading text-white">{incidentStats?.open_incidents ?? '—'} open</p><p className="mt-1 text-xs text-text-muted">{incidentStats ? `${incidentStats.high_severity_incidents} high severity · ${incidentStats.total_incidents} historical` : 'Historical incident data unavailable'}</p></div></BorderGlow></section>
+      <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">{telemetry.map(item => <div key={item.label} className="bg-surface/75 border border-white/[0.08] rounded-xl p-4"><p className="text-[10px] text-text-muted uppercase tracking-wider">{item.label}</p><p className={`mt-2 font-heading text-xl font-bold ${item.tone}`}>{item.value}</p><p className="mt-1 text-[10px] text-text-muted">Current {mode === 'live' ? 'host' : 'synthetic'} reading</p></div>)}</section>
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-6"><BorderGlow glowSize={340} glowOpacity={0.25}><div className="p-5 h-[350px] flex flex-col"><div><h2 className="text-base font-heading font-semibold text-white">Historical resource telemetry</h2><p className="text-[10px] text-text-muted mt-1">CSV-backed samples · CPU and memory percentage over time</p></div><div className="flex-1 min-h-0 mt-4">{history.length ? <ResponsiveContainer width="100%" height="100%"><AreaChart data={history} margin={{ left: -25, right: 10, top: 10 }}><defs><linearGradient id="dashboardCpu" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#4F8BFF" stopOpacity={.2}/><stop offset="95%" stopColor="#4F8BFF" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.02)" vertical={false}/><XAxis dataKey="timestamp" stroke="rgba(255,255,255,.3)" fontSize={9} tickLine={false}/><YAxis stroke="rgba(255,255,255,.3)" fontSize={9} tickLine={false}/><Tooltip contentStyle={{ backgroundColor: '#0D1728', border: '1px solid rgba(255,255,255,.08)', borderRadius: 12, fontSize: 11 }}/><Area name="CPU" type="monotone" dataKey="cpu" stroke="#4F8BFF" fill="url(#dashboardCpu)"/><Area name="Memory" type="monotone" dataKey="memory" stroke="#63D6FF" fill="none"/></AreaChart></ResponsiveContainer> : <p className="h-full grid place-items-center text-xs text-text-muted">No historical telemetry available.</p>}</div></div></BorderGlow><BorderGlow glowSize={340} glowOpacity={0.25}><div className="p-5 h-[350px] flex flex-col"><div><h2 className="text-base font-heading font-semibold text-white">Diagnosis & decision</h2><p className="text-[10px] text-text-muted mt-1">Weighted root-cause analysis and recommendation</p></div>{status ? <div className="mt-5 space-y-4 text-xs overflow-auto"><div><p className="text-primary font-semibold uppercase tracking-wider text-[10px]">What is happening?</p><p className="text-white font-semibold mt-1">{status.root_cause}</p><p className="text-text-muted mt-1">Primary diagnosis: {status.primary_issue}</p></div><div><p className="text-accent font-semibold uppercase tracking-wider text-[10px]">Recommended next step</p><p className="text-white font-semibold mt-1">{status.recommended_action}</p><p className="text-text-muted mt-1">{status.reason}</p></div></div> : <p className="h-full grid place-items-center text-xs text-text-muted">Diagnosis unavailable until system status loads.</p>}</div></BorderGlow></section>
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-2 bg-surface/80 border border-white/[0.08] p-5 rounded-2xl shadow-glass"><div className="flex justify-between gap-3"><h2 className="text-base font-heading font-semibold text-white">Prediction & evidence</h2><Link to="/predictions" className="text-xs text-primary font-semibold">View Prediction</Link></div>{status ? <div className="mt-4 grid sm:grid-cols-2 gap-5 text-xs"><div><p className="text-text-muted uppercase tracking-wider text-[10px]">Failure forecast</p><p className="text-white font-semibold mt-1">{status.prediction}</p><p className="text-accent mt-2">Time to failure: {status.time_to_failure}</p><p className="text-text-muted mt-1">Trend direction: {status.trends.risk_direction} ({status.trends.sample_size} samples)</p></div><div><p className="text-text-muted uppercase tracking-wider text-[10px]">Why this result?</p><p className="text-white mt-1">Detection: {status.anomaly_reason}</p><ul className="mt-2 space-y-1 text-text-muted list-disc pl-4">{status.explainability.map(item => <li key={item}>{item}</li>)}</ul></div></div> : <p className="mt-4 text-xs text-text-muted">No prediction evidence available.</p>}</div><div className="bg-surface/80 border border-white/[0.08] p-5 rounded-2xl shadow-glass"><h2 className="text-base font-heading font-semibold text-white">Telemetry mode</h2><div className="flex gap-2 mt-4"><button onClick={() => void changeMode('live')} className={`flex-1 rounded-lg py-2 text-xs font-semibold border ${mode === 'live' ? 'bg-primary/15 border-primary/30 text-primary' : 'border-white/[.08] text-text-muted'}`}>Live</button><button onClick={() => void changeMode('demo')} className={`flex-1 rounded-lg py-2 text-xs font-semibold border ${mode === 'demo' ? 'bg-accent/15 border-accent/30 text-accent' : 'border-white/[.08] text-text-muted'}`}>Demo</button></div><p className="text-[10px] text-text-muted mt-3">{mode === 'live' ? 'Host metrics collected by the backend.' : 'Controlled synthetic metrics generated by the backend.'}</p>{mode === 'demo' && <div className="mt-3 space-y-2 max-h-36 overflow-auto">{Object.entries(scenarios).map(([name, scenario]) => <button key={name} onClick={() => void activateScenario(name)} className={`w-full text-left rounded-lg border px-3 py-2 ${status?.scenario.name === name ? 'border-accent/30 bg-accent/10' : 'border-white/[.07] bg-elevated/30 hover:border-primary/25'}`}><span className="block text-xs text-white font-semibold">{scenario.label}</span><span className="block text-[10px] text-text-muted mt-1">{scenario.service} · {scenario.description}</span></button>)}</div>}</div></section>
+      <section className="bg-surface/80 border border-white/[0.08] p-5 rounded-2xl shadow-glass"><div className="flex justify-between items-center gap-4"><div><h2 className="text-base font-heading font-semibold text-white">Recent incident history</h2><p className="text-[10px] text-text-muted mt-1">Persisted operational records · newest first</p></div><Database className="h-4 w-4 text-primary" /></div><div className="mt-4 space-y-2">{incidents.length ? incidents.map(incident => <div key={incident.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-elevated/40 p-3.5 rounded-xl border border-white/[.05]"><div><p className="text-sm text-white font-semibold">INC-{String(incident.id).padStart(4, '0')} · {incident.anomaly_type}</p><p className="text-[11px] text-text-muted mt-1">{incident.service_name} · {incident.status} · {new Date(incident.timestamp).toLocaleString()}</p></div><span className={`w-fit px-2 py-1 rounded border text-[10px] font-semibold uppercase ${statusTone(incident.severity)}`}>{incident.severity}</span></div>) : <p className="py-5 text-xs text-text-muted">No persisted incidents are available.</p>}</div></section>
     </div>
-  </div>
-);
+  </div>;
 }

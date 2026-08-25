@@ -1,162 +1,36 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Save, RefreshCw, Bell, Sliders } from 'lucide-react';
+import { CheckCircle2, Database, RefreshCw, XCircle } from 'lucide-react';
+import { api, type ModelStatus, type TrainingResponse } from '../../services/api';
 
 export default function Settings() {
-  const [anomalyThreshold, setAnomalyThreshold] = useState(85);
-  const [sensitivity, setSensitivity] = useState(7);
-  const [retrainWindow, setRetrainWindow] = useState(24);
-  const [loading, setLoading] = useState(false);
-  const [slackChecked, setSlackChecked] = useState(true);
-  const [emailChecked, setEmailChecked] = useState(true);
-  const [pagerChecked, setPagerChecked] = useState(false);
+  const [model, setModel] = useState<ModelStatus | null>(null);
+  const [training, setTraining] = useState(false);
+  const [result, setResult] = useState<TrainingResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadStatus = useCallback(async (signal?: AbortSignal) => {
+    try { setModel(await api.getModelStatus(signal)); setError(null); }
+    catch (requestError) { if (!(requestError instanceof DOMException && requestError.name === 'AbortError')) setError(requestError instanceof Error ? requestError.message : 'Unable to load model status.'); }
+  }, []);
+
+  useEffect(() => { const controller = new AbortController(); void loadStatus(controller.signal); return () => controller.abort(); }, [loadStatus]);
 
   const handleRetrain = async () => {
-    setLoading(true);
-    try {
-      // Preserving original fetch path and logic
-      await fetch('http://127.0.0.1:8000/train', { method: 'POST' });
-    } catch (e) {
-      console.warn('Retrain failed', e);
-    }
-    setTimeout(() => setLoading(false), 2000);
+    setTraining(true); setResult(null); setError(null);
+    try { const response = await api.trainModel({ data_path: 'system_metrics.csv', contamination: 0.1 }); setResult(response); await loadStatus(); }
+    catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Training request failed.'); }
+    finally { setTraining(false); }
   };
 
-  return (
-    <div className="p-8 bg-background min-h-screen text-text-primary">
-      <div className="max-w-3xl mx-auto space-y-6">
-        
-        {/* Header */}
-        <div className="border-b border-white/[0.06] pb-5">
-          <h1 className="text-2.5xl font-bold font-heading text-white tracking-tight">Platform Settings</h1>
-          <p className="text-text-muted text-xs mt-1 leading-relaxed">
-            Configure machine learning model thresholds, alerting channels, and automation actions
-          </p>
-        </div>
-
-        {/* Configuration sections */}
-        <div className="grid gap-6">
-          
-          {/* Section 1: ML Config */}
-          <motion.div 
-            initial={{ opacity: 0, y: 15 }} 
-            animate={{ opacity: 1, y: 0 }} 
-            className="bg-surface/85 border border-white/[0.08] rounded-2xl p-6 shadow-glass"
-          >
-            <div className="flex items-center space-x-3 mb-6">
-              <Sliders className="h-5 w-5 text-primary" />
-              <h2 className="text-base font-bold font-heading text-white">ML Model Configuration</h2>
-            </div>
-            
-            <div className="space-y-6">
-              {/* Slider 1 */}
-              <div>
-                <div className="flex justify-between mb-2 text-xs">
-                  <label className="text-text-muted">Anomaly Detection Threshold</label>
-                  <span className="font-bold text-primary font-mono">{anomalyThreshold}%</span>
-                </div>
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="100" 
-                  value={anomalyThreshold} 
-                  onChange={e => setAnomalyThreshold(Number(e.target.value))} 
-                  className="w-full accent-primary bg-background/50 h-1.5 rounded-lg cursor-pointer appearance-none" 
-                />
-              </div>
-
-              {/* Slider 2 */}
-              <div>
-                <div className="flex justify-between mb-2 text-xs">
-                  <label className="text-text-muted">Prediction Sensitivity</label>
-                  <span className="font-bold text-primary font-mono">{sensitivity}/10</span>
-                </div>
-                <input 
-                  type="range" 
-                  min="1" 
-                  max="10" 
-                  value={sensitivity} 
-                  onChange={e => setSensitivity(Number(e.target.value))} 
-                  className="w-full accent-primary bg-background/50 h-1.5 rounded-lg cursor-pointer appearance-none" 
-                />
-              </div>
-
-              {/* Slider 3 */}
-              <div>
-                <div className="flex justify-between mb-2 text-xs">
-                  <label className="text-text-muted">Retraining Window</label>
-                  <span className="font-bold text-primary font-mono">{retrainWindow}h</span>
-                </div>
-                <input 
-                  type="range" 
-                  min="1" 
-                  max="72" 
-                  value={retrainWindow} 
-                  onChange={e => setRetrainWindow(Number(e.target.value))} 
-                  className="w-full accent-primary bg-background/50 h-1.5 rounded-lg cursor-pointer appearance-none" 
-                />
-              </div>
-
-              {/* Force retrain button */}
-              <div className="pt-4 border-t border-white/[0.06] flex">
-                <button 
-                  onClick={handleRetrain} 
-                  disabled={loading} 
-                  className="flex items-center space-x-2 bg-elevated/75 border border-white/[0.08] hover:border-primary/30 text-primary px-5 py-2.5 rounded-xl text-xs font-semibold hover:bg-elevated transition-colors disabled:opacity-50"
-                >
-                  <RefreshCw className={`h-4 w-4 shrink-0 ${loading ? 'animate-spin' : ''}`} />
-                  <span>{loading ? 'Retraining Models...' : 'Force Retrain Models'}</span>
-                </button>
-              </div>
-            </div>
-          </motion.div>
-
-          {/* Section 2: Alert Channels */}
-          <motion.div 
-            initial={{ opacity: 0, y: 15 }} 
-            animate={{ opacity: 1, y: 0 }} 
-            transition={{ delay: 0.08 }} 
-            className="bg-surface/85 border border-white/[0.08] rounded-2xl p-6 shadow-glass"
-          >
-            <div className="flex items-center space-x-3 mb-6">
-              <Bell className="h-5 w-5 text-accent" />
-              <h2 className="text-base font-bold font-heading text-white">Alert Channels</h2>
-            </div>
-            
-            <div className="space-y-4">
-              {[
-                { id: 'slack', label: 'Slack Notifications', checked: slackChecked, setChecked: setSlackChecked },
-                { id: 'email', label: 'Email Alerts', checked: emailChecked, setChecked: setEmailChecked },
-                { id: 'pager', label: 'PagerDuty Integration', checked: pagerChecked, setChecked: setPagerChecked }
-              ].map(ch => (
-                <label key={ch.id} className="flex items-center space-x-3 text-xs text-text-muted hover:text-white cursor-pointer select-none group w-fit">
-                  <div
-                    onClick={() => ch.setChecked(!ch.checked)}
-                    className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
-                      ch.checked ? 'bg-primary border-primary' : 'border-white/20 bg-elevated/50 group-hover:border-white/40'
-                    }`}
-                  >
-                    {ch.checked && (
-                      <svg className="w-2.5 h-2.5 text-background" fill="currentColor" viewBox="0 0 12 12">
-                        <path d="M10 3L5 8.5 2 5.5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                    )}
-                  </div>
-                  <span>{ch.label}</span>
-                </label>
-              ))}
-            </div>
-          </motion.div>
-
-          {/* Save Button */}
-          <div className="flex justify-end pt-2">
-            <button className="flex items-center space-x-2 bg-gradient-to-r from-primary to-accent text-background font-bold px-7 py-3 rounded-xl hover:shadow-neon transition-all text-xs">
-              <Save className="h-4 w-4" />
-              <span>Save Configurations</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return <div className="p-8 bg-background min-h-screen text-text-primary"><div className="max-w-3xl mx-auto space-y-6">
+    <div className="border-b border-white/[0.06] pb-5"><h1 className="text-2.5xl font-bold font-heading text-white tracking-tight">Model & system configuration</h1><p className="text-text-muted text-xs mt-1 leading-relaxed">Backend-supported model readiness and training controls. Alert routing and threshold persistence are not configured by this application.</p></div>
+    {error && <div className="rounded-xl border border-white/15 bg-surface px-4 py-3 text-xs text-text-muted flex justify-between gap-3"><span>{error}</span><button onClick={() => void loadStatus()} className="text-primary font-semibold">Retry</button></div>}
+    <motion.section initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className="bg-surface/85 border border-white/[0.08] rounded-2xl p-6 shadow-glass">
+      <div className="flex items-center justify-between gap-4"><div className="flex items-center gap-3"><Database className="h-5 w-5 text-primary" /><div><h2 className="text-base font-bold font-heading text-white">Anomaly model status</h2><p className="text-xs text-text-muted mt-1">Isolation Forest model used alongside weighted detection rules.</p></div></div>{model ? <span className={`px-3 py-1 rounded-full border text-xs font-semibold ${model.model_loaded ? 'text-primary border-primary/25 bg-primary/10' : 'text-accent border-accent/25 bg-accent/10'}`}>{model.model_loaded ? 'Ready' : 'Not trained'}</span> : <span className="text-xs text-text-muted">Loading…</span>}</div>
+      {model && <div className="grid sm:grid-cols-2 gap-4 mt-6 text-xs"><div className="rounded-xl bg-elevated/50 border border-white/[.05] p-4"><p className="text-text-muted uppercase tracking-wider text-[10px]">Backend state</p><p className="text-white font-semibold mt-2">{model.status}</p></div><div className="rounded-xl bg-elevated/50 border border-white/[.05] p-4"><p className="text-text-muted uppercase tracking-wider text-[10px]">Model features</p><p className="text-white mt-2 leading-relaxed">{model.features.join(', ')}</p></div></div>}
+    </motion.section>
+    <motion.section initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: .08 }} className="bg-surface/85 border border-white/[0.08] rounded-2xl p-6 shadow-glass"><h2 className="text-base font-bold font-heading text-white">Train anomaly model</h2><p className="text-xs text-text-muted mt-1 leading-relaxed">Uses the backend’s configured <code>system_metrics.csv</code> training dataset and contamination value of 0.1.</p><button onClick={() => void handleRetrain()} disabled={training} className="mt-5 flex items-center gap-2 bg-elevated/75 border border-white/[0.08] hover:border-primary/30 text-primary px-5 py-2.5 rounded-xl text-xs font-semibold disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${training ? 'animate-spin' : ''}`} /><span>{training ? 'Training model…' : 'Train model'}</span></button>{result && <div className="mt-4 flex items-start gap-2 text-xs text-text-muted"><CheckCircle2 className="h-4 w-4 text-primary shrink-0" /><span>{result.message}{result.total_samples !== undefined ? ` · ${result.total_samples} samples processed` : ''}</span></div>}</motion.section>
+    <section className="rounded-2xl border border-white/[0.08] bg-elevated/30 p-5 flex gap-3"><XCircle className="h-4 w-4 text-text-muted shrink-0" /><p className="text-xs text-text-muted leading-relaxed">Notification channels, model-threshold sliders, and configuration saving are intentionally unavailable because the backend does not expose persistent APIs for them.</p></section>
+  </div></div>;
 }

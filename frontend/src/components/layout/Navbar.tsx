@@ -18,6 +18,12 @@ export default function Navbar() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  useEffect(() => {
+    const syncMode = (event: Event) => setIsLive((event as CustomEvent<boolean>).detail);
+    window.addEventListener('autoops-mode-synced', syncMode);
+    return () => window.removeEventListener('autoops-mode-synced', syncMode);
+  }, []);
+
   // Sync Live/Demo toggle — keeps existing localStorage + custom event logic
   const handleToggleMode = () => {
     const next = !isLive;

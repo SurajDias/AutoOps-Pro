@@ -1,92 +1,53 @@
-import type { Metric, Incident, Prediction, ServiceNode } from '../types';
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
 
-const API_URL = 'http://127.0.0.1:8000';
-const USE_MOCK_DATA = false; // Toggle to true to use mock data
+export class ApiError extends Error {
+  public readonly status?: number;
+  constructor(message: string, status?: number) { super(message); this.name = 'ApiError'; this.status = status; }
+}
 
-export const fetchMetrics = async (): Promise<Metric[]> => {
-  if (USE_MOCK_DATA) {
-    return [
-      { cpu: 65, memory: 75, latency: 120, requests: 2500, timestamp: new Date().toISOString() },
-    ];
-  }
-  const res = await fetch(`${API_URL}/metrics`);
-  if (!res.ok) throw new Error('Failed to fetch metrics');
-  return res.json();
+export type MetricsMode = 'live' | 'demo';
+export interface Metrics { cpu: number; memory: number; response_time: number; requests: number; error_rate: number; latency: number; }
+export interface MetricHistoryRow { timestamp: string; service: string; scenario: string; cpu: number; memory: number; response_time: number; requests: number; error_rate: number; latency: number; }
+export interface DemoScenario { label: string; description: string; service: string; }
+export interface SystemStatus {
+  service: string; scenario: { name: string; label: string; description: string; service: string }; status: 'normal' | 'warning' | 'critical'; anomaly: boolean; anomaly_score: number; anomaly_reason: string;
+  root_cause: string; primary_issue: string; severity: 'Normal' | 'Warning' | 'Critical'; confidence: number; recommended_action: string; risk: string; reason: string;
+  trends: { sample_size: number; risk_direction: 'Worsening' | 'Improving' | 'Stable'; metrics: Record<string, { trend: 'Increasing' | 'Decreasing' | 'Stable'; change: number; current: number }> };
+  prediction: string; time_to_failure: string; explainability: string[]; similar_incident: string; demo_step: string;
+}
+export interface Incident { id: number; service_name: string; severity: string; anomaly_type: string; root_cause: string; recommendation: string; status: string; timestamp: string; }
+export interface IncidentStatistics { total_incidents: number; open_incidents: number; resolved_incidents: number; high_severity_incidents: number; }
+export interface IncidentPatterns { most_common_root_cause: string | null; most_affected_service: string | null; recurring_incidents: number; }
+export interface Topology { nodes: Array<{ id: string; label: string }>; edges: Array<{ source: string; target: string }>; }
+export type ServiceHealth = Record<string, 'healthy' | 'degraded' | 'failed'>;
+export interface SimulationResult { action: string; updated_metrics: { cpu_usage: number; latency: number }; failure_risk: string; confidence: string; confidence_pct: number; severity: string; root_cause: string; explanation: string; }
+export interface ModelStatus { model_loaded: boolean; model_path: string | null; features: string[]; status: string; }
+export interface TrainingResponse { success: boolean; message: string; total_samples?: number; n_anomalies_detected?: number; anomaly_rate?: number; }
+
+async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<T> {
+  let response: Response;
+  try { response = await fetch(`${API_BASE_URL}${path}`, { ...init, signal, headers: { Accept: 'application/json', ...init.headers } }); }
+  catch (error) { if (error instanceof DOMException && error.name === 'AbortError') throw error; throw new ApiError('Unable to reach the AutoOps API. Check that the backend is running.'); }
+  if (!response.ok) throw new ApiError(`AutoOps API request failed (${response.status}).`, response.status);
+  try { return await response.json() as T; } catch { throw new ApiError('AutoOps API returned an invalid response.'); }
+}
+
+export const api = {
+  getMetrics: (signal?: AbortSignal) => request<Metrics>('/metrics', {}, signal),
+  getSystemStatus: (signal?: AbortSignal) => request<SystemStatus>('/system-status', {}, signal),
+  getMetricsMode: (signal?: AbortSignal) => request<{ mode: MetricsMode }>('/metrics/mode', {}, signal),
+  setMetricsMode: (mode: MetricsMode, signal?: AbortSignal) => request<{ success: boolean; mode?: MetricsMode; message?: string }>(`/metrics/mode/${mode}`, { method: 'POST' }, signal),
+  getDemoScenarios: (signal?: AbortSignal) => request<Record<string, DemoScenario>>('/demo/scenarios', {}, signal),
+  activateDemoScenario: (name: string, signal?: AbortSignal) => request<{ success: boolean; scenario?: Record<string, unknown>; message?: string }>(`/demo/scenario/${encodeURIComponent(name)}`, { method: 'POST' }, signal),
+  getMetricsHistory: (limit = 50, service?: string, signal?: AbortSignal) => request<MetricHistoryRow[]>(`/metrics/history?limit=${limit}${service ? `&service=${encodeURIComponent(service)}` : ''}`, {}, signal),
+  getIncidents: (signal?: AbortSignal) => request<Incident[]>('/incidents/all', {}, signal), getIncidentHistory: (signal?: AbortSignal) => request<Incident[]>('/incidents/history', {}, signal),
+  getIncidentStatistics: (signal?: AbortSignal) => request<IncidentStatistics>('/incidents/statistics', {}, signal), getIncidentPatterns: (signal?: AbortSignal) => request<IncidentPatterns>('/incidents/patterns', {}, signal),
+  searchIncidents: (filters: { service_name?: string; root_cause?: string; severity?: string }, signal?: AbortSignal) => { const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value) as [string, string][]); return request<{ total_matches: number; incidents: Incident[] }>(`/incidents/search${params.size ? `?${params}` : ''}`, {}, signal); },
+  getIncident: (id: number, signal?: AbortSignal) => request<Incident>(`/incidents/${id}`, {}, signal), updateIncident: (id: number, status: string, signal?: AbortSignal) => request<{ message: string; incident: Incident }>(`/incidents/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }, signal),
+  createIncident: (incident: Omit<Incident, 'id' | 'timestamp'>, signal?: AbortSignal) => request<{ message: string; incident_id: number }>('/incidents/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(incident) }, signal),
+  getTopology: (signal?: AbortSignal) => request<Topology>('/topology', {}, signal), getServiceHealth: (signal?: AbortSignal) => request<ServiceHealth>('/service-health', {}, signal), simulateCascade: (signal?: AbortSignal) => request<{ failed_service: string; cascade_services: string[]; status: Record<string, string> }>('/simulate-cascade', {}, signal),
+  simulateAction: (payload: { metrics: { cpu_usage: number; latency: number }; action: string; context?: Record<string, string> }, signal?: AbortSignal) => request<{ success: boolean; data: SimulationResult }>('/simulator/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, signal),
+  trainModel: (body: { data_path: string; contamination: number }, signal?: AbortSignal) => request<TrainingResponse>('/ml/train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, signal), getModelStatus: (signal?: AbortSignal) => request<ModelStatus>('/ml/model-status', {}, signal),
 };
 
-export const fetchPredictions = async (): Promise<Prediction[]> => {
-  if (USE_MOCK_DATA) {
-    return [
-      { id: '1', title: 'Disk Space Critical', service: 'db-main', severity: 'high', confidence: 0.9, time_to_failure: '3h' },
-    ];
-  }
-  const res = await fetch(`${API_URL}/predictions`);
-  if (!res.ok) throw new Error('Failed to fetch predictions');
-  return res.json();
-};
-
-export const fetchIncidents = async (): Promise<Incident[]> => {
-  if (USE_MOCK_DATA) {
-    return [
-      {
-        id: '1',
-        title: 'API Gateway Timeout',
-        severity: 'critical',
-        status: 'open',
-        service: 'api-gateway',
-        rca: 'High traffic load',
-        created_at: new Date().toISOString()
-      },
-    ];
-  }
-  const res = await fetch(`${API_URL}/incidents`);
-  if (!res.ok) throw new Error('Failed to fetch incidents');
-  return res.json();
-};
-
-export const fetchTopology = async (): Promise<ServiceNode[]> => {
-  if (USE_MOCK_DATA) {
-    return [
-      { id: '1', name: 'Frontend', status: 'healthy', type: 'web', connections: ['2'] },
-      { id: '2', name: 'API Gateway', status: 'healthy', type: 'gateway', connections: ['3', '4'] },
-      { id: '3', name: 'Auth Service', status: 'healthy', type: 'service', connections: ['5'] },
-      { id: '4', name: 'Data Service', status: 'degraded', type: 'service', connections: ['6'] },
-      { id: '5', name: 'User DB', status: 'healthy', type: 'database', connections: [] },
-      { id: '6', name: 'Main DB', status: 'critical', type: 'database', connections: [] },
-    ];
-  }
-  const res = await fetch(`${API_URL}/topology`);
-  if (!res.ok) throw new Error('Failed to fetch topology');
-  return res.json();
-};
-
-export const fetchSystemStatus = async (): Promise<{ status: string }> => {
-  if (USE_MOCK_DATA) {
-    return { status: 'Degraded' };
-  }
-  const res = await fetch(`${API_URL}/status`);
-  if (!res.ok) throw new Error('Failed to fetch system status');
-  return res.json();
-};
-
-export const triggerTraining = async (): Promise<{ message: string }> => {
-  if (USE_MOCK_DATA) {
-    return { message: 'Mock training triggered' };
-  }
-  const res = await fetch(`${API_URL}/train`, { method: 'POST' });
-  if (!res.ok) throw new Error('Failed to trigger training');
-  return res.json();
-};
-
-export const sendSimulatorQuery = async (query: string): Promise<{ response: string }> => {
-  if (USE_MOCK_DATA) {
-    return { response: `Simulated response for: ${query}` };
-  }
-  const res = await fetch(`${API_URL}/simulator/query`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query })
-  });
-  if (!res.ok) throw new Error('Failed to send simulator query');
-  return res.json();
-};
+export const formatConfidence = (value: number) => `${Math.round(value <= 1 ? value * 100 : value)}%`;

@@ -1,37 +1,58 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Server, Database, Activity, Cpu } from 'lucide-react';
+import { Server, Database, Activity, Cpu, Play } from 'lucide-react';
+import { api } from '../../services/api';
 
-const DEMO_NODES = [
-  { id: 'web', x: 180, y: 200, label: 'Web Frontend', status: 'healthy', type: 'web' },
-  { id: 'api', x: 380, y: 200, label: 'API Gateway', status: 'healthy', type: 'gateway' },
-  { id: 'auth', x: 580, y: 120, label: 'Auth Service', status: 'warning', type: 'service' },
-  { id: 'db', x: 580, y: 280, label: 'Database', status: 'critical', type: 'database' }
-];
-
-const DEMO_EDGES = [
-  { source: 'web', target: 'api' },
-  { source: 'api', target: 'auth' },
-  { source: 'api', target: 'db' }
-];
+interface TopologyNode { id: string; label: string; name?: string; }
+interface TopologyEdge { source: string; target: string; }
+interface ServiceNode extends TopologyNode {
+  x: number;
+  y: number;
+  status: string;
+  type: string;
+}
 
 export default function ServiceMap() {
-  const [nodes, setNodes] = useState(DEMO_NODES);
-  const [edges, setEdges] = useState(DEMO_EDGES);
-  const [selectedNode, setSelectedNode] = useState<any>(null);
+  const [nodes, setNodes] = useState<ServiceNode[]>([]);
+  const [edges, setEdges] = useState<TopologyEdge[]>([]);
+  const [selectedNode, setSelectedNode] = useState<ServiceNode | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [cascade, setCascade] = useState<{ failed_service: string; cascade_services: string[]; status: Record<string, string> } | null>(null);
+  const [cascadeError, setCascadeError] = useState<string | null>(null);
+  const [simulating, setSimulating] = useState(false);
 
   useEffect(() => {
-    // Preserving original fetch path and logic
-    fetch('http://127.0.0.1:8000/topology')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => { 
-        if (data?.nodes && data?.edges) { 
-          setNodes(data.nodes); 
-          setEdges(data.edges); 
-        } 
+    const controller = new AbortController();
+    Promise.all([api.getTopology(controller.signal), api.getServiceHealth(controller.signal)])
+      .then(([topology, health]) => {
+        if (topology?.nodes && topology?.edges) {
+          setError(null);
+          const positions: Record<string, [number, number]> = {
+            gateway: [150, 200], auth: [360, 100], order: [360, 235],
+            payment: [590, 170], inventory: [590, 300], db: [730, 235],
+          };
+          setNodes((topology.nodes as TopologyNode[]).map((node, index) => ({
+            ...node,
+            x: positions[node.id]?.[0] ?? 120 + index * 110,
+            y: positions[node.id]?.[1] ?? 200,
+            status: (health as Record<string, string>)?.[node.id] === 'failed' ? 'critical' : (health as Record<string, string>)?.[node.id] || 'healthy',
+            type: node.id === 'db' ? 'database' : node.id === 'gateway' ? 'gateway' : 'service',
+          })));
+          setEdges(topology.edges);
+          setLastRefresh(new Date());
+        } else throw new Error('Topology response was incomplete');
       })
-      .catch(() => console.warn('Using demo topology data'));
+      .catch((requestError) => { if (!(requestError instanceof DOMException && requestError.name === 'AbortError')) setError(requestError instanceof Error ? requestError.message : 'Topology request failed'); });
+    return () => controller.abort();
   }, []);
+
+  const simulateCascade = async () => {
+    setSimulating(true); setCascade(null); setCascadeError(null);
+    try { setCascade(await api.simulateCascade()); }
+    catch (requestError) { setCascadeError(requestError instanceof Error ? requestError.message : 'Cascade simulation unavailable.'); }
+    finally { setSimulating(false); }
+  };
 
   const getStatusColor = (status: string) => {
     // Preserving ONLY shades of blue, navy, and white
@@ -51,14 +72,18 @@ export default function ServiceMap() {
       {/* Header */}
       <div className="border-b border-white/[0.06] pb-5 mb-6">
         <h1 className="text-2.5xl font-bold font-heading text-white tracking-tight">Service Topology</h1>
-        <p className="text-text-muted text-xs mt-1 leading-relaxed">
-          Interactive map of container networking links and microservice dependencies
-        </p>
+        <p className="text-text-muted text-xs mt-1 leading-relaxed">Static backend topology · service health is synthetic/random, not production discovery or tracing.</p>
+        <p className="text-text-muted text-[10px] mt-2">Topology source: backend static graph · Health source: synthetic backend generator{lastRefresh ? ' · Refreshed ' + lastRefresh.toLocaleTimeString() : ''}</p>
       </div>
+      {error && <p className="mb-4 text-xs text-primary">{error}</p>}
+      <div className="mb-4 flex flex-wrap items-center gap-3"><button onClick={() => void simulateCascade()} disabled={simulating} className="px-4 py-2 rounded-lg border border-accent/30 bg-accent/10 text-accent text-xs font-bold disabled:opacity-50 flex gap-2"><Play className="h-3.5 w-3.5 fill-current"/>{simulating ? 'Simulating…' : 'Simulate Cascade'}</button><span className="text-[10px] text-text-muted">SIMULATION ONLY</span></div>
+      {cascadeError && <div className="mb-4 rounded-xl border border-white/15 bg-surface px-4 py-3 text-xs text-text-muted">{cascadeError}</div>}
+      {cascade && <div className="mb-4 rounded-xl border border-accent/25 bg-surface p-4 text-xs"><p className="text-accent font-bold tracking-wider">CASCADE SIMULATION</p><p className="mt-2 text-white">Failed service: {cascade.failed_service}</p><p className="mt-1 text-text-muted">Affected services: {cascade.cascade_services.length ? cascade.cascade_services.join(', ') : 'None returned by backend'}</p></div>}
 
       <div className="flex-1 bg-surface/65 border border-white/[0.08] rounded-2xl relative overflow-hidden flex shadow-glass min-h-[500px]">
         {/* SVG Canvas Topology */}
         <div className="flex-grow relative h-full">
+          {!error && nodes.length === 0 && <p className="absolute inset-0 flex items-center justify-center text-xs text-text-muted">Loading topology…</p>}
           <svg className="w-full h-full min-h-[450px]" viewBox="0 0 800 400">
             {/* Connection Edges */}
             {edges.map((edge, i) => {
@@ -87,7 +112,7 @@ export default function ServiceMap() {
             })}
 
             {/* Nodes */}
-            {nodes.map((node: any) => {
+            {nodes.map((node) => {
               const color = getStatusColor(node.status);
               const isSelected = selectedNode?.id === node.id;
               
@@ -186,25 +211,25 @@ export default function ServiceMap() {
               <div className="space-y-4">
                 <div className="p-3.5 bg-background/50 rounded-xl border border-white/[0.05]">
                   <p className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">CPU Usage</p>
-                  <p className="font-bold text-base text-white font-heading mt-0.5">{(Math.random() * 40 + 10).toFixed(1)}%</p>
+                  <p className="font-bold text-base text-white font-heading mt-0.5">Not available</p>
                 </div>
                 <div className="p-3.5 bg-background/50 rounded-xl border border-white/[0.05]">
                   <p className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">Memory Allocation</p>
-                  <p className="font-bold text-base text-white font-heading mt-0.5">{(Math.random() * 6 + 2).toFixed(1)} GB</p>
+                  <p className="font-bold text-base text-white font-heading mt-0.5">Not available</p>
                 </div>
                 <div className="p-3.5 bg-background/50 rounded-xl border border-white/[0.05]">
                   <p className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">Network In/Out</p>
-                  <p className="font-bold text-base text-white font-heading mt-0.5">{(Math.random() * 450 + 50).toFixed(0)} MB/s</p>
+                  <p className="font-bold text-base text-white font-heading mt-0.5">Not available</p>
                 </div>
               </div>
             </div>
 
-            {/* Quick Actions */}
+            {/* No tracing API is currently available. */}
             <div className="pt-4 border-t border-white/[0.06]">
-              <button className="w-full py-2.5 bg-primary hover:bg-primary/95 text-background text-xs font-bold rounded-xl flex items-center justify-center space-x-2 shadow-neon transition-all">
+              <div className="w-full py-2.5 border border-white/[0.08] text-text-muted text-xs font-semibold rounded-xl flex items-center justify-center space-x-2">
                 <Activity className="w-3.5 h-3.5" />
-                <span>Inspect Traces</span>
-              </button>
+                <span>Trace inspection is not available</span>
+              </div>
             </div>
           </motion.div>
         )}

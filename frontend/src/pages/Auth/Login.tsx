@@ -80,7 +80,7 @@ export default function Login() {
               Welcome back
             </h1>
             <p className="text-white/40 text-sm leading-relaxed">
-              Sign in to your intelligent operations workspace.
+              Local demo access for the AutoOps operations workspace.
             </p>
           </div>
 

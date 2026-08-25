@@ -1,139 +1,21 @@
-import { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { AlertOctagon, ChevronDown, Activity, Clock, FileText, Check } from 'lucide-react';
-
-const DEMO_INCIDENTS = [
-  { id: 'INC-1023', title: 'Database connection pool approaching limit', severity: 'High', status: 'Investigating', time: '10 mins ago', rca: 'Surge in user logins caused DB pool exhaustion. Suggested fix: Increase max_connections and add read replicas.' },
-  { id: 'INC-1022', title: 'Elevated error rate in payment gateway', severity: 'Critical', status: 'Mitigated', time: '1 hour ago', rca: 'Third-party API timeout. AI automatically routed traffic to fallback gateway.' },
-  { id: 'INC-1021', title: 'High memory usage in caching layer', severity: 'Medium', status: 'Resolved', time: '5 hours ago', rca: 'Cache eviction policy failure. Resolved by restarting Redis pods and updating TTL policy.' }
-];
+import { useCallback, useEffect, useState } from 'react';
+import { Check, Search } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { api, type Incident, type IncidentPatterns, type IncidentStatistics } from '../../services/api';
 
 export default function Incidents() {
-  const [incidents, setIncidents] = useState(DEMO_INCIDENTS);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Preserving original fetch path and logic
-    fetch('http://127.0.0.1:8000/incidents')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => { if (data?.incidents) setIncidents(data.incidents); })
-      .catch(() => console.warn('Using demo incident data'));
-  }, []);
-
-  const getSeverityStyle = (severity: string) => {
-    switch (severity) {
-      case 'Critical':
-        return {
-          iconColor: 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.4)]',
-          badge: 'bg-white/10 border-white/20 text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]'
-        };
-      case 'High':
-        return {
-          iconColor: 'text-accent',
-          badge: 'bg-accent/10 border-accent/20 text-accent'
-        };
-      default:
-        return {
-          iconColor: 'text-primary',
-          badge: 'bg-primary/10 border-primary/20 text-primary'
-        };
-    }
-  };
-
-  return (
-    <div className="p-8 bg-background min-h-screen text-text-primary">
-      <div className="max-w-4xl mx-auto space-y-6">
-        
-        {/* Header */}
-        <div className="border-b border-white/[0.06] pb-5">
-          <h1 className="text-2.5xl font-bold font-heading text-white tracking-tight">Incident Management</h1>
-          <p className="text-text-muted text-xs mt-1 leading-relaxed">
-            Real-time tracking of active outages, anomalies, and auto-generated mitigation flows
-          </p>
-        </div>
-
-        {/* Incidents stream list */}
-        <div className="space-y-4">
-          {incidents.map((inc: any, i) => {
-            const styles = getSeverityStyle(inc.severity);
-            const isExpanded = expandedId === String(inc.id);
-
-            return (
-              <motion.div 
-                key={inc.id} 
-                initial={{ opacity: 0, y: 15 }} 
-                animate={{ opacity: 1, y: 0 }} 
-                transition={{ delay: i * 0.08 }} 
-                className="bg-surface/80 border border-white/[0.08] rounded-2xl overflow-hidden shadow-glass"
-              >
-                {/* Accordion header click trigger */}
-                <div 
-                  onClick={() => setExpandedId(isExpanded ? null : String(inc.id))} 
-                  className="p-5 cursor-pointer hover:bg-elevated/45 transition-colors flex items-center justify-between gap-4 select-none"
-                >
-                  <div className="flex items-center space-x-4">
-                    <AlertOctagon className={`h-7 w-7 shrink-0 ${styles.iconColor}`} />
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-sm font-bold font-heading text-white tracking-tight">{inc.id}: {inc.title}</h3>
-                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase border ${styles.badge}`}>
-                          {inc.severity}
-                        </span>
-                      </div>
-                      <div className="flex items-center space-x-4 mt-1.5 text-xs text-text-muted">
-                        <span className="flex items-center space-x-1">
-                          <Activity className="h-3.5 w-3.5" />
-                          <span>Status: {inc.status}</span>
-                        </span>
-                        <span className="w-1 h-1 bg-white/10 rounded-full" />
-                        <span className="flex items-center space-x-1">
-                          <Clock className="h-3.5 w-3.5" />
-                          <span>{inc.time}</span>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  <ChevronDown className={`h-4 w-4 text-text-muted transition-transform duration-300 ${isExpanded ? 'rotate-180 text-white' : ''}`} />
-                </div>
-
-                {/* Expanded details container */}
-                <AnimatePresence initial={false}>
-                  {isExpanded && (
-                    <motion.div 
-                      initial={{ height: 0, opacity: 0 }} 
-                      animate={{ height: 'auto', opacity: 1 }} 
-                      exit={{ height: 0, opacity: 0 }} 
-                      transition={{ duration: 0.25, ease: "easeInOut" }}
-                      className="border-t border-white/[0.06] bg-elevated/20"
-                    >
-                      <div className="p-6 space-y-4">
-                        <div>
-                          <h4 className="text-primary font-heading font-semibold text-xs uppercase tracking-wider mb-1.5">
-                            Automated Root Cause Analysis
-                          </h4>
-                          <p className="text-text-muted text-xs leading-relaxed font-body">{inc.rca}</p>
-                        </div>
-                        
-                        <div className="flex flex-wrap gap-2.5 pt-2">
-                          <button className="px-4 py-2 bg-gradient-to-r from-primary to-accent text-background text-xs font-bold rounded-lg hover:shadow-neon transition-all flex items-center space-x-1.5">
-                            <Check className="h-3.5 w-3.5" />
-                            <span>Apply Fix</span>
-                          </button>
-                          <button className="px-4 py-2 border border-white/[0.08] bg-elevated text-text-primary text-xs font-semibold rounded-lg hover:bg-elevated/80 hover:border-primary/20 transition-all flex items-center space-x-1.5">
-                            <FileText className="h-3.5 w-3.5" />
-                            <span>View Logs</span>
-                          </button>
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </motion.div>
-            );
-          })}
-        </div>
-
-      </div>
-    </div>
-  );
+  const [incidents, setIncidents] = useState<Incident[]>([]); const [stats, setStats] = useState<IncidentStatistics | null>(null); const [patterns, setPatterns] = useState<IncidentPatterns | null>(null);
+  const [selected, setSelected] = useState<Incident | null>(null); const [filters, setFilters] = useState({ service_name: '', severity: '', root_cause: '' }); const [loading, setLoading] = useState(true); const [updating, setUpdating] = useState(false); const [error, setError] = useState<string | null>(null); const [notice, setNotice] = useState<string | null>(null); const navigate = useNavigate();
+  const load = useCallback(async () => { setLoading(true); try { const [all, statistics, aggregate] = await Promise.all([api.getIncidents(), api.getIncidentStatistics(), api.getIncidentPatterns()]); setIncidents(all); setStats(statistics); setPatterns(aggregate); setSelected(current => current ? all.find(item => item.id === current.id) || null : all[0] || null); setError(null); } catch (requestError) { setIncidents([]); setStats(null); setPatterns(null); setSelected(null); setError(requestError instanceof Error ? requestError.message : 'Incident data is unavailable.'); } finally { setLoading(false); } }, []);
+  useEffect(() => { void load(); }, [load]);
+  const search = async () => { setLoading(true); try { const response = await api.searchIncidents(filters); setIncidents(response.incidents); setSelected(response.incidents[0] || null); setError(null); } catch (requestError) { setIncidents([]); setSelected(null); setError(requestError instanceof Error ? requestError.message : 'Incident search failed.'); } finally { setLoading(false); } };
+  const resolve = async () => { if (!selected) return; setUpdating(true); try { const response = await api.updateIncident(selected.id, 'Resolved'); setSelected(response.incident); setIncidents(current => current.map(item => item.id === selected.id ? response.incident : item)); setNotice('Incident status updated to Resolved.'); await load(); } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Status update failed.'); } finally { setUpdating(false); } };
+  return <div className="p-8 bg-background min-h-screen text-text-primary"><div className="max-w-7xl mx-auto space-y-6"><header className="border-b border-white/[.06] pb-5"><h1 className="text-2.5xl font-bold font-heading text-white">Incident Management</h1><p className="text-text-muted text-xs mt-1">Persisted incident records and supported status management.</p></header>
+    {error && <div className="rounded-xl border border-white/15 bg-surface px-4 py-3 text-xs text-text-muted flex justify-between"><span>{error}</span><button onClick={() => void load()} className="text-primary font-semibold">Retry</button></div>}{notice && <p className="text-xs text-primary">{notice}</p>}
+    <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[['Open', stats?.open_incidents], ['High / Critical', stats?.high_severity_incidents], ['Resolved', stats?.resolved_incidents], ['Historical', stats?.total_incidents]].map(([label, count]) => <div className="bg-surface/80 border border-white/[.08] rounded-xl p-4" key={String(label)}><p className="text-[10px] uppercase tracking-wider text-text-muted">{label}</p><p className="text-xl font-bold text-white mt-2">{count ?? '—'}</p></div>)}</section>
+    <section className="bg-surface/80 border border-white/[.08] rounded-2xl p-4 grid md:grid-cols-4 gap-3"><input value={filters.service_name} onChange={event => setFilters({ ...filters, service_name: event.target.value })} placeholder="Service" className="bg-background border border-white/[.08] rounded-lg px-3 py-2 text-xs"/><input value={filters.root_cause} onChange={event => setFilters({ ...filters, root_cause: event.target.value })} placeholder="Root cause" className="bg-background border border-white/[.08] rounded-lg px-3 py-2 text-xs"/><input value={filters.severity} onChange={event => setFilters({ ...filters, severity: event.target.value })} placeholder="Severity" className="bg-background border border-white/[.08] rounded-lg px-3 py-2 text-xs"/><button onClick={() => void search()} className="rounded-lg bg-primary text-background text-xs font-bold flex justify-center items-center gap-2"><Search className="h-4 w-4"/>Search</button></section>
+    <section className="grid lg:grid-cols-5 gap-6"><div className="lg:col-span-3 bg-surface/80 border border-white/[.08] rounded-2xl overflow-hidden"><div className="p-4 border-b border-white/[.06] text-xs text-text-muted">Incident list · {loading ? 'Loading…' : incidents.length + ' records'}</div>{!loading && incidents.length === 0 && <p className="p-6 text-xs text-text-muted">No incidents found.</p>}<div className="divide-y divide-white/[.05]">{incidents.map(incident => <button key={incident.id} onClick={() => setSelected(incident)} className={'w-full text-left p-4 hover:bg-elevated/30 ' + (selected?.id === incident.id ? 'bg-primary/5' : '')}><div className="flex justify-between gap-3"><p className="text-sm text-white font-semibold">{'INC-' + String(incident.id).padStart(4, '0') + ' · ' + incident.service_name}</p><span className="text-[10px] text-accent">{incident.severity}</span></div><p className="mt-1 text-xs text-text-muted">{incident.root_cause}</p><p className="mt-2 text-[10px] text-text-muted">{incident.status} · {new Date(incident.timestamp).toLocaleString()}</p></button>)}</div></div>
+      <aside className="lg:col-span-2 bg-surface/80 border border-white/[.08] rounded-2xl p-5">{selected ? <div className="space-y-4 text-xs"><p className="text-[10px] uppercase tracking-widest text-text-muted">Incident detail · historical record</p><h2 className="text-lg font-heading font-bold text-white">{'INC-' + String(selected.id).padStart(4, '0')}</h2>{[['Service', selected.service_name], ['Severity', selected.severity], ['Anomaly type', selected.anomaly_type], ['Root cause', selected.root_cause], ['Recommendation', selected.recommendation], ['Status', selected.status], ['Timestamp', new Date(selected.timestamp).toLocaleString()]].map(([key, value]) => <div key={key}><p className="text-text-muted">{key}</p><p className="text-white mt-1">{value}</p></div>)}<div className="flex flex-wrap gap-2 pt-2">{selected.status !== 'Resolved' && <button disabled={updating} onClick={() => void resolve()} className="px-3 py-2 rounded-lg bg-primary text-background font-bold disabled:opacity-40 flex gap-1"><Check className="h-4 w-4"/>{updating ? 'Updating…' : 'Resolve'}</button>}<button onClick={() => navigate('/ai-simulator')} className="px-3 py-2 rounded-lg border border-accent/30 text-accent font-bold">Simulate recommended action</button></div></div> : <p className="text-xs text-text-muted">Select an incident to inspect its supported details.</p>}</aside></section>
+    <section className="bg-surface/80 border border-white/[.08] rounded-2xl p-5"><p className="text-[10px] uppercase tracking-widest text-text-muted">Pattern context</p>{patterns ? <div className="mt-3 grid md:grid-cols-3 gap-3 text-xs"><p>Most common root cause: <span className="text-white">{patterns.most_common_root_cause || 'No pattern data available'}</span></p><p>Most affected service: <span className="text-white">{patterns.most_affected_service || 'No pattern data available'}</span></p><p>Recurring records: <span className="text-white">{patterns.recurring_incidents}</span></p></div> : <p className="mt-2 text-xs text-text-muted">No pattern data available.</p>}</section>
+  </div></div>;
 }

@@ -5,11 +5,9 @@ import { useAuth } from '../../context/AuthContext';
 import Radar from '../../components/ui/Radar';
 
 const STEPS = [
-  'Connecting telemetry streams...',
-  'Analyzing system signals...',
-  'Building dependency graph...',
-  'Initializing predictive intelligence...',
-  'Preparing your workspace...'
+  'Preparing your local workspace...',
+  'Loading the operations interface...',
+  'Ready to connect to AutoOps telemetry...'
 ];
 
 export default function AIInitialization() {
