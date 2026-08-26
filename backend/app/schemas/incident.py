@@ -1,4 +1,12 @@
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
+
+
+# These are the only lifecycle states implemented by the incident API and UI.
+# Keeping this at the request boundary prevents statistics and filters from
+# silently receiving unsupported values such as "Acknowledged".
+IncidentStatus = Literal["Open", "Resolved"]
 
 
 class IncidentCreate(BaseModel):
@@ -7,15 +15,14 @@ class IncidentCreate(BaseModel):
     anomaly_type: str
     root_cause: str
     recommendation: str
-    status: str = "Open"
+    status: IncidentStatus = "Open"
 
 
 class IncidentResponse(IncidentCreate):
     id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class IncidentUpdate(BaseModel):
-    status: str
+    status: IncidentStatus

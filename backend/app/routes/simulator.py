@@ -1,9 +1,12 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 from app.models.simulator import WhatIfSimulator
 
 router = APIRouter(prefix="/simulator", tags=["Simulator"])
 
 simulator = WhatIfSimulator()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/simulate")
@@ -26,5 +29,8 @@ def simulate_action(payload: dict):
             "data": result
         }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Simulation failed")
+        raise HTTPException(status_code=500, detail="Simulation could not be completed.")

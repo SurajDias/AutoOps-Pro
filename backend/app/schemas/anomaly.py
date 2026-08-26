@@ -5,7 +5,7 @@ Pydantic schemas for anomaly detection API.
 These define the expected input/output formats.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional
 
 
@@ -22,8 +22,8 @@ class MetricInput(BaseModel):
     error_rate: float = Field(..., ge=0, le=100, description="Error rate percentage")
     latency: float = Field(..., ge=0, description="Latency in milliseconds")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "service": "payment",
                 "cpu": 85.5,
@@ -31,9 +31,10 @@ class MetricInput(BaseModel):
                 "response_time": 1250,
                 "requests": 450,
                 "error_rate": 3.2,
-                "latency": 180
+                "latency": 180,
             }
         }
+    )
 
 
 class AnomalyResult(BaseModel):
@@ -46,16 +47,17 @@ class AnomalyResult(BaseModel):
     confidence: float = Field(..., ge=0, le=1, description="Confidence in prediction (0-1)")
     reason: str = Field(..., description="Human-readable explanation")
     
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "service": "payment",
                 "is_anomaly": True,
                 "anomaly_score": -0.45,
                 "confidence": 0.82,
-                "reason": "High CPU (85.5%) + Slow response time (1250ms)"
+                "reason": "High CPU (85.5%) + Slow response time (1250ms)",
             }
         }
+    )
 
 
 class TrainingRequest(BaseModel):

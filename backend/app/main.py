@@ -26,6 +26,18 @@ from app.routes import system
 from app.api.incident_api import router as incident_router
 
 
+DEFAULT_CORS_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
+CORS_ALLOW_CREDENTIALS = True
+
+
+def parse_cors_origins(origins_value: str, *, allow_credentials: bool = CORS_ALLOW_CREDENTIALS) -> list[str]:
+    """Parse CORS origins and reject credentialed wildcard access at startup."""
+    origins = [origin.strip() for origin in origins_value.split(",") if origin.strip()]
+    if allow_credentials and "*" in origins:
+        raise RuntimeError("CORS_ORIGINS must not include '*' when credentials are enabled.")
+    return origins
+
+
 app = FastAPI(
     title="AutoOps Pro API",
     version="1.0.0"
@@ -34,16 +46,12 @@ app = FastAPI(
 # =========================
 # CORS
 # =========================
-cors_origins = [
-    origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
-    if origin.strip()
-]
+cors_origins = parse_cors_origins(os.getenv("CORS_ORIGINS", DEFAULT_CORS_ORIGINS))
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_credentials=True,
+    allow_credentials=CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

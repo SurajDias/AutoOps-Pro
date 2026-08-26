@@ -15,3 +15,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Local development backups
+frontend_backup/
+*.bak

@@ -85,6 +85,16 @@ The anomaly detector is deliberately hybrid rather than pure ML: rule-based thre
 
 Copy [`.env.example`](.env.example) to a local `.env` and set `DATABASE_URL` for PostgreSQL-backed incident persistence. The backend intentionally has no embedded database password. Copy [`frontend/.env.example`](frontend/.env.example) to `frontend/.env` to configure `VITE_API_BASE_URL`. Real `.env` files are ignored by Git.
 
+## Database migrations
+
+Incident schema changes are managed with Alembic. Run the following before starting a production backend after deploying a version with new migrations:
+
+```bash
+.venv/bin/alembic upgrade head
+```
+
+Alembic reads only `DATABASE_URL`; `TEST_DATABASE_URL` remains reserved for the isolated pytest fixtures. The initial baseline creates `incidents` on a fresh database. For an existing deployment, it verifies that the expected incident columns exist and records the revision without dropping, recreating, or modifying incident rows. Do not run `alembic downgrade` against production; the baseline deliberately refuses destructive downgrades.
+
 ## Panel-ready capability boundaries
 
 - Observation: live mode reads host-level metrics through the backend; demo mode uses controlled synthetic scenarios and provides metric history.

@@ -8,6 +8,7 @@ export class ApiError extends Error {
 }
 
 export type MetricsMode = 'live' | 'demo';
+export type IncidentStatus = 'Open' | 'Resolved';
 export interface Metrics { cpu: number; memory: number; response_time: number; requests: number; error_rate: number; latency: number; }
 export interface MetricHistoryRow { timestamp: string; service: string; scenario: string; cpu: number; memory: number; response_time: number; requests: number; error_rate: number; latency: number; }
 export interface DemoScenario { label: string; description: string; service: string; }
@@ -17,7 +18,7 @@ export interface SystemStatus {
   trends: { sample_size: number; risk_direction: 'Worsening' | 'Improving' | 'Stable'; metrics: Record<string, { trend: 'Increasing' | 'Decreasing' | 'Stable'; change: number; current: number }> };
   prediction: string; time_to_failure: string; explainability: string[]; similar_incident: string; demo_step: string;
 }
-export interface Incident { id: number; service_name: string; severity: string; anomaly_type: string; root_cause: string; recommendation: string; status: string; timestamp: string; }
+export interface Incident { id: number; service_name: string; severity: string; anomaly_type: string; root_cause: string; recommendation: string; status: IncidentStatus; timestamp: string; }
 export interface IncidentStatistics { total_incidents: number; open_incidents: number; resolved_incidents: number; high_severity_incidents: number; }
 export interface IncidentPatterns { most_common_root_cause: string | null; most_affected_service: string | null; recurring_incidents: number; }
 export interface Topology { nodes: Array<{ id: string; label: string }>; edges: Array<{ source: string; target: string }>; }
@@ -56,7 +57,7 @@ export const api = {
   getIncidents: (signal?: AbortSignal) => request<Incident[]>('/incidents/all', {}, signal), getIncidentHistory: (signal?: AbortSignal) => request<Incident[]>('/incidents/history', {}, signal),
   getIncidentStatistics: (signal?: AbortSignal) => request<IncidentStatistics>('/incidents/statistics', {}, signal), getIncidentPatterns: (signal?: AbortSignal) => request<IncidentPatterns>('/incidents/patterns', {}, signal),
   searchIncidents: (filters: { service_name?: string; root_cause?: string; severity?: string }, signal?: AbortSignal) => { const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value) as [string, string][]); return request<{ total_matches: number; incidents: Incident[] }>(`/incidents/search${params.size ? `?${params}` : ''}`, {}, signal); },
-  getIncident: (id: number, signal?: AbortSignal) => request<Incident>(`/incidents/${id}`, {}, signal), updateIncident: (id: number, status: string, signal?: AbortSignal) => request<{ message: string; incident: Incident }>(`/incidents/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }, signal),
+  getIncident: (id: number, signal?: AbortSignal) => request<Incident>(`/incidents/${id}`, {}, signal), updateIncident: (id: number, status: IncidentStatus, signal?: AbortSignal) => request<{ message: string; incident: Incident }>(`/incidents/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }, signal),
   createIncident: (incident: Omit<Incident, 'id' | 'timestamp'>, signal?: AbortSignal) => request<{ message: string; incident_id: number }>('/incidents/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(incident) }, signal),
   getTopology: (signal?: AbortSignal) => request<Topology>('/topology', {}, signal), getServiceHealth: (signal?: AbortSignal) => request<ServiceHealth>('/service-health', {}, signal), simulateCascade: (signal?: AbortSignal) => request<{ failed_service: string; cascade_services: string[]; status: Record<string, string> }>('/simulate-cascade', {}, signal),
   simulateAction: (payload: { metrics: { cpu_usage: number; latency: number }; action: string; context?: Record<string, string> }, signal?: AbortSignal) => request<{ success: boolean; data: SimulationResult }>('/simulator/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, signal),

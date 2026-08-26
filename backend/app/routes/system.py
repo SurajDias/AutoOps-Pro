@@ -20,7 +20,6 @@ from app.database.postgres import create_incident_record, find_similar_incident
 router   = APIRouter()
 history  = []
 _sim     = WhatIfSimulator()   # used only for _select_best_action()
-_last_recorded_incident = None
 logger = logging.getLogger(__name__)
 
 
@@ -103,23 +102,11 @@ def _similar_incident(primary_issue):
 
 def _record_incident_if_needed(scenario, root_result, anomaly_reason, decision):
     """Create one record per active high-severity detection."""
-    global _last_recorded_incident
-
     severity = str(root_result.get("status", "")).lower()
     if severity not in ("high", "critical"):
-        _last_recorded_incident = None
         return
 
     root_cause = root_result.get("summary") or root_result.get("primary_issue") or "Unknown"
-    incident_signature = (
-        scenario.get("service", "payment"),
-        severity,
-        root_cause,
-        anomaly_reason,
-    )
-    if incident_signature == _last_recorded_incident:
-        return
-
     created = create_incident_record({
         "service_name": scenario.get("service", "payment"),
         "severity": severity.title(),
@@ -134,7 +121,6 @@ def _record_incident_if_needed(scenario, root_result, anomaly_reason, decision):
             status_code=503,
             detail="Current analysis is available, but incident persistence is unavailable. Check the incident database.",
         )
-    _last_recorded_incident = incident_signature
 
 
 @router.get("/system-status")
@@ -234,8 +220,6 @@ def change_metrics_mode(mode: str):
 
 @router.post("/demo/scenario/{name}")
 def activate_demo_scenario(name: str):
-    global _last_recorded_incident
-
     # Existing dashboard controls should always resume the demo source.
     set_metrics_mode("demo")
     scenario = set_scenario(name)
@@ -244,6 +228,5 @@ def activate_demo_scenario(name: str):
 
     if name == "fixed":
         history.clear()
-        _last_recorded_incident = None
 
     return {"success": True, "scenario": scenario}

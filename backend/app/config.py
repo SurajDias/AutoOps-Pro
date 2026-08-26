@@ -16,3 +16,4 @@ ENV_FILE = PROJECT_ROOT / ".env"
 load_dotenv(ENV_FILE, override=False)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
