@@ -1,8 +1,10 @@
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
+const REQUEST_TIMEOUT_MS = 10_000;
 
 export class ApiError extends Error {
   public readonly status?: number;
-  constructor(message: string, status?: number) { super(message); this.name = 'ApiError'; this.status = status; }
+  public readonly kind: 'network' | 'timeout' | 'http' | 'response';
+  constructor(message: string, kind: ApiError['kind'], status?: number) { super(message); this.name = 'ApiError'; this.kind = kind; this.status = status; }
 }
 
 export type MetricsMode = 'live' | 'demo';
@@ -25,11 +27,22 @@ export interface ModelStatus { model_loaded: boolean; model_path: string | null;
 export interface TrainingResponse { success: boolean; message: string; total_samples?: number; n_anomalies_detected?: number; anomaly_rate?: number; }
 
 async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<T> {
+  const timeout = new AbortController();
+  const timer = window.setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
+  const combinedSignal = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal;
   let response: Response;
-  try { response = await fetch(`${API_BASE_URL}${path}`, { ...init, signal, headers: { Accept: 'application/json', ...init.headers } }); }
-  catch (error) { if (error instanceof DOMException && error.name === 'AbortError') throw error; throw new ApiError('Unable to reach the AutoOps API. Check that the backend is running.'); }
-  if (!response.ok) throw new ApiError(`AutoOps API request failed (${response.status}).`, response.status);
-  try { return await response.json() as T; } catch { throw new ApiError('AutoOps API returned an invalid response.'); }
+  try { response = await fetch(`${API_BASE_URL}${path}`, { ...init, signal: combinedSignal, headers: { Accept: 'application/json', ...init.headers } }); }
+  catch (error) {
+    if (signal?.aborted) throw error;
+    if (timeout.signal.aborted) throw new ApiError('The AutoOps API did not respond within 10 seconds.', 'timeout');
+    throw new ApiError('Unable to reach the AutoOps API. Check that the backend is running and reachable.', 'network');
+  } finally { window.clearTimeout(timer); }
+  if (!response.ok) {
+    let message = `AutoOps API request failed (${response.status}).`;
+    try { const body = await response.json() as { detail?: string }; if (body.detail) message = body.detail; } catch { /* use status message */ }
+    throw new ApiError(message, 'http', response.status);
+  }
+  try { return await response.json() as T; } catch { throw new ApiError('AutoOps API returned an invalid response.', 'response'); }
 }
 
 export const api = {

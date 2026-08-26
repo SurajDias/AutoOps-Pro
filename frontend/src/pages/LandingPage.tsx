@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight, Shield, Globe, Award, Activity } from 'lucide-react';
 import { AutoOpsLogo } from '../components/ui/AutoOpsLogo';
@@ -11,38 +11,6 @@ import { ColorBends } from '../components/ui/ColorBends';
 import { PixelGrid } from '../components/ui/PixelGrid';
 import { WebThreads } from '../components/ui/WebThreads';
 import Scanner from '../components/ui/Scanner';
-
-// ─── Animated counter ─────────────────────────────────────────
-const AnimatedStat: React.FC<{ value: number; suffix?: string; duration?: number }> = ({ value, suffix = '', duration = 1.6 }) => {
-  const [count, setCount] = useState(0);
-  const ref = useRef<HTMLSpanElement>(null);
-  const [started, setStarted] = useState(false);
-
-  useEffect(() => {
-    const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting) setStarted(true); }, { threshold: 0.2 });
-    if (ref.current) obs.observe(ref.current);
-    return () => obs.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (!started) return;
-    let frame = 0;
-    const totalFrames = duration * 60;
-    const inc = value / totalFrames;
-    const timer = setInterval(() => {
-      frame++;
-      setCount(Math.min(inc * frame, value));
-      if (frame >= totalFrames) clearInterval(timer);
-    }, 16);
-    return () => clearInterval(timer);
-  }, [started, value, duration]);
-
-  return (
-    <span ref={ref} className="font-heading font-bold tabular-nums">
-      {count.toLocaleString(undefined, { maximumFractionDigits: 2 })}{suffix}
-    </span>
-  );
-};
 
 // ─── Particles ───────────────────────────────────────────────
 const particles = Array.from({ length: 20 }).map((_, i) => ({
@@ -416,12 +384,13 @@ export const LandingPage: React.FC = () => {
                 viewport={{ once: true }}
                 className="space-y-5"
               >
+                <p className="text-[10px] text-text-muted uppercase tracking-widest">Prototype capability summary · not live operational telemetry</p>
                 <div className="grid grid-cols-2 gap-5">
                   {[
-                    { icon: Shield,   label: 'Target Uptime',         value: 99.99, suffix: '%', color: '#4F8BFF' },
-                    { icon: Globe,    label: 'Avg MTTR',               value: 4.2,   suffix: 'm', color: '#63D6FF' },
-                    { icon: Award,    label: 'Anomaly Accuracy',       value: 98.6,  suffix: '%', color: '#4F8BFF' },
-                    { icon: Activity, label: 'AI Recommendations Generated', value: 847,   suffix: '',  color: '#63D6FF' },
+                    { icon: Shield, label: 'Telemetry modes', value: 'Live + Demo', color: '#4F8BFF' },
+                    { icon: Globe, label: 'Incident records', value: 'PostgreSQL', color: '#63D6FF' },
+                    { icon: Award, label: 'Detection', value: 'Hybrid scoring', color: '#4F8BFF' },
+                    { icon: Activity, label: 'Decision support', value: 'What-if simulation', color: '#63D6FF' },
                   ].map(stat => {
                     const Icon = stat.icon;
                     return (
@@ -430,9 +399,7 @@ export const LandingPage: React.FC = () => {
                           <Icon className="w-4 h-4" style={{ color: stat.color }} />
                         </div>
                         <div>
-                          <div className="text-3xl font-heading font-bold text-text-primary mb-1">
-                            <AnimatedStat value={stat.value} suffix={stat.suffix} />
-                          </div>
+                          <div className="text-xl font-heading font-bold text-text-primary mb-1">{stat.value}</div>
                           <div className="text-[10px] text-text-muted tracking-wider uppercase font-medium">{stat.label}</div>
                         </div>
                       </div>

@@ -23,6 +23,12 @@ export default function ServiceMap() {
   const [simulating, setSimulating] = useState(false);
 
   useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setSelectedNode(null); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  useEffect(() => {
     const controller = new AbortController();
     Promise.all([api.getTopology(controller.signal), api.getServiceHealth(controller.signal)])
       .then(([topology, health]) => {
@@ -120,6 +126,10 @@ export default function ServiceMap() {
                 <g 
                   key={node.id} 
                   onClick={() => setSelectedNode(node)} 
+                  onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedNode(node); } }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Inspect ${node.label || node.name}; synthetic health ${node.status}`}
                   className="cursor-pointer group"
                 >
                   {/* Orbit Glow Ring for selected node */}
@@ -180,7 +190,7 @@ export default function ServiceMap() {
           <motion.div 
             initial={{ x: 300, opacity: 0 }} 
             animate={{ x: 0, opacity: 1 }} 
-            className="w-80 shrink-0 border-l border-white/[0.08] bg-elevated/75 p-6 backdrop-blur-md flex flex-col justify-between"
+            className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 lg:border-l border-white/[0.08] bg-elevated/75 p-6 backdrop-blur-md flex flex-col justify-between"
           >
             <div>
               <div className="flex justify-between items-start mb-4">
@@ -189,6 +199,7 @@ export default function ServiceMap() {
                 </h2>
                 <button 
                   onClick={() => setSelectedNode(null)} 
+                  aria-label="Close service detail"
                   className="text-text-muted hover:text-white text-xs font-mono"
                 >
                   ESC

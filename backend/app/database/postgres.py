@@ -1,21 +1,22 @@
-import os
+import logging
+
+from app.config import DATABASE_URL
 
 SQLALCHEMY_AVAILABLE = False
+logger = logging.getLogger(__name__)
 
 try:
     from sqlalchemy import create_engine, text
     from sqlalchemy.exc import SQLAlchemyError
     from sqlalchemy.orm import declarative_base, sessionmaker
 
-    DATABASE_URL = os.getenv(
-        "DATABASE_URL",
-        "postgresql://postgres:postgres@localhost:5432/autoops",
-    )
-
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    if DATABASE_URL:
+        engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        SQLALCHEMY_AVAILABLE = True
+    else:
+        engine = SessionLocal = None
     Base = declarative_base()
-    SQLALCHEMY_AVAILABLE = True
 
 except (ImportError, ModuleNotFoundError):
     create_engine = text = sessionmaker = None
@@ -26,7 +27,11 @@ except (ImportError, ModuleNotFoundError):
 
 def get_db():
     if SessionLocal is None:
-        return
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=503,
+            detail="Incident database is not configured. Set DATABASE_URL to enable incident persistence.",
+        )
 
     db = SessionLocal()
     try:
@@ -43,7 +48,8 @@ def _get_session():
         db = SessionLocal()
         db.execute(text("SELECT 1"))
         return db
-    except (SQLAlchemyError, OSError):
+    except (SQLAlchemyError, OSError) as error:
+        logger.exception("Incident database health check failed: %s", error)
         return None
 
 
@@ -67,7 +73,8 @@ def find_similar_incident(primary_issue):
 
         return f"INC-{incident.id:04d}: {incident.root_cause}"
 
-    except (SQLAlchemyError, OSError):
+    except (SQLAlchemyError, OSError) as error:
+        logger.exception("Historical incident lookup failed: %s", error)
         return None
 
     finally:
@@ -97,10 +104,14 @@ def create_incident_record(incident_data):
                     "root_cause",
                 )
             )
-            db.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:dedupe_key))"),
+            lock_acquired = db.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:dedupe_key))"),
                 {"dedupe_key": dedupe_key},
-            )
+            ).scalar()
+            if not lock_acquired:
+                logger.warning("Automatic incident persistence lock was unavailable for %s", dedupe_key)
+                db.rollback()
+                return False
 
         existing = (
             db.query(Incident)
@@ -114,13 +125,17 @@ def create_incident_record(incident_data):
             .first()
         )
         if existing is not None:
+            # Explicitly end the transaction so the transaction-scoped advisory
+            # lock is released before the session is returned to the pool.
+            db.rollback()
             return True
 
         db.add(Incident(**incident_data))
         db.commit()
         return True
 
-    except (SQLAlchemyError, OSError):
+    except (SQLAlchemyError, OSError) as error:
+        logger.exception("Automatic incident persistence failed: %s", error)
         db.rollback()
         return False
 

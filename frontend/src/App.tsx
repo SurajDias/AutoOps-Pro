@@ -1,17 +1,17 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/layout/Layout';
-import { LandingPage } from './pages/LandingPage';
-import Dashboard from './pages/Dashboard/Dashboard';
-import Predictions from './pages/Predictions/Predictions';
-import Incidents from './pages/Incidents/Incidents';
-import ServiceMap from './pages/ServiceMap/ServiceMap';
-import AISimulator from './pages/AISimulator/AISimulator';
-import Settings from './pages/Settings/Settings';
-import Login from './pages/Auth/Login';
-import Signup from './pages/Auth/Signup';
-import AIInitialization from './pages/Auth/AIInitialization';
+const LandingPage = lazy(() => import('./pages/LandingPage').then(module => ({ default: module.LandingPage })));
+const Dashboard = lazy(() => import('./pages/Dashboard/Dashboard'));
+const Predictions = lazy(() => import('./pages/Predictions/Predictions'));
+const Incidents = lazy(() => import('./pages/Incidents/Incidents'));
+const ServiceMap = lazy(() => import('./pages/ServiceMap/ServiceMap'));
+const AISimulator = lazy(() => import('./pages/AISimulator/AISimulator'));
+const Settings = lazy(() => import('./pages/Settings/Settings'));
+const Login = lazy(() => import('./pages/Auth/Login'));
+const Signup = lazy(() => import('./pages/Auth/Signup'));
+const AIInitialization = lazy(() => import('./pages/Auth/AIInitialization'));
 
 import { ToastContainer } from './components/common/ToastContainer';
 import { CommandPalette } from './components/common/CommandPalette';
@@ -66,6 +66,7 @@ function AppRoutes() {
       <ToastContainer />
       <CommandPalette />
       
+      <Suspense fallback={<div className="min-h-screen grid place-items-center bg-background text-text-muted text-sm">Loading AutoOps Pro…</div>}>
       <Routes>
         <Route path="/" element={<LandingPage />} />
         
@@ -109,6 +110,7 @@ function AppRoutes() {
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Suspense>
     </>
   );
 }

@@ -63,7 +63,9 @@ export default function Navbar() {
       }`}
     >
       {/* Brand */}
-      <div
+      <button
+        type="button"
+        aria-label="Go to dashboard"
         className="flex items-center gap-2.5 cursor-pointer group"
         onClick={() => navigate('/dashboard')}
       >
@@ -74,7 +76,7 @@ export default function Navbar() {
         <span className="font-heading font-bold text-base text-text-primary tracking-tight">
           AutoOps <span className="text-primary">Pro</span>
         </span>
-      </div>
+      </button>
 
       {/* Nav links */}
       <div className="hidden lg:flex items-center gap-1">
@@ -122,6 +124,8 @@ export default function Navbar() {
           </span>
           <button
             onClick={handleToggleMode}
+            aria-label={`Switch to ${isLive ? 'demo' : 'live'} telemetry mode`}
+            aria-pressed={isLive}
             className={`w-8 h-4.5 rounded-full relative transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
               isLive ? 'bg-primary' : 'bg-white/10'
             }`}
@@ -156,10 +160,9 @@ export default function Navbar() {
         </button>
 
         {/* Bell */}
-        <button className="relative w-9 h-9 rounded-lg bg-elevated border border-white/[0.06] flex items-center justify-center text-text-muted hover:text-text-primary hover:border-primary/25 transition-all">
+        <span aria-label="Notifications are not available in this local demo" title="Notifications are not available in this local demo" className="relative w-9 h-9 rounded-lg bg-elevated border border-white/[0.06] flex items-center justify-center text-text-muted opacity-60">
           <Bell className="w-4 h-4" />
-          <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-primary rounded-full" />
-        </button>
+        </span>
 
         {/* User menu */}
         <div className="relative" data-user-menu>

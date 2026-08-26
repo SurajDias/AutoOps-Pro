@@ -14,7 +14,7 @@ const stages = [
   {
     icon:  Activity,
     label: 'Telemetry Ingestion',
-    desc:  'Raw metrics, logs & traces from all services',
+    desc:  'Host metrics or controlled demo scenarios',
     accent: '#38BDF8',
   },
   {
@@ -331,9 +331,9 @@ export const ArchitectureDiagram: React.FC = () => {
         }}
       >
         {[
-          { label: 'Detection latency',  val: '< 200ms' },
-          { label: 'False positive rate', val: '< 0.3%' },
-          { label: 'Model accuracy',     val: '98.6%' },
+          { label: 'Detection', val: 'Isolation Forest + rules' },
+          { label: 'Diagnosis', val: 'Weighted contributions' },
+          { label: 'Decision', val: 'Deterministic simulation' },
         ].map((stat) => (
           <div
             key={stat.label}
@@ -348,7 +348,7 @@ export const ArchitectureDiagram: React.FC = () => {
           >
             <p
               style={{
-                fontSize: 22,
+                fontSize: 13,
                 fontWeight: 800,
                 color: '#38BDF8',
                 fontFamily: 'Inter, sans-serif',
