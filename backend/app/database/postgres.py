@@ -82,6 +82,40 @@ def create_incident_record(incident_data):
     try:
         from app.database.models import Incident
 
+        # Automatic system-status polling can evaluate the same active failure
+        # repeatedly. Reuse the existing Open record for that exact condition
+        # while allowing a new record after the prior incident is resolved.
+        # Serialize this check-and-insert per condition so concurrent polling
+        # requests cannot both observe an empty result and insert duplicates.
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            dedupe_key = "|".join(
+                str(incident_data.get(field, ""))
+                for field in (
+                    "service_name",
+                    "severity",
+                    "anomaly_type",
+                    "root_cause",
+                )
+            )
+            db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:dedupe_key))"),
+                {"dedupe_key": dedupe_key},
+            )
+
+        existing = (
+            db.query(Incident)
+            .filter(
+                Incident.service_name == incident_data.get("service_name"),
+                Incident.severity == incident_data.get("severity"),
+                Incident.anomaly_type == incident_data.get("anomaly_type"),
+                Incident.root_cause == incident_data.get("root_cause"),
+                Incident.status == "Open",
+            )
+            .first()
+        )
+        if existing is not None:
+            return True
+
         db.add(Incident(**incident_data))
         db.commit()
         return True
