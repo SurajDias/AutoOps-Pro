@@ -22,6 +22,7 @@ export interface Incident { id: number; service_name: string; severity: string; 
 export interface IncidentStatistics { total_incidents: number; open_incidents: number; resolved_incidents: number; high_severity_incidents: number; }
 export interface IncidentPatterns { most_common_root_cause: string | null; most_affected_service: string | null; recurring_incidents: number; }
 export interface Topology { nodes: Array<{ id: string; label: string }>; edges: Array<{ source: string; target: string }>; }
+export interface CascadePrediction { failed_service: string; affected_services: string[]; affected_count: number; severity: 'low' | 'medium' | 'high'; cascade_depth: number; failure_path: string[]; }
 export type ServiceHealth = Record<string, 'healthy' | 'degraded' | 'failed'>;
 export interface SimulationResult { action: string; updated_metrics: { cpu_usage: number; latency: number }; failure_risk: string; confidence: string; confidence_pct: number; severity: string; root_cause: string; explanation: string; }
 export interface ModelStatus { model_loaded: boolean; model_path: string | null; features: string[]; status: string; }
@@ -60,6 +61,7 @@ export const api = {
   getIncident: (id: number, signal?: AbortSignal) => request<Incident>(`/incidents/${id}`, {}, signal), updateIncident: (id: number, status: IncidentStatus, signal?: AbortSignal) => request<{ message: string; incident: Incident }>(`/incidents/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }, signal),
   createIncident: (incident: Omit<Incident, 'id' | 'timestamp'>, signal?: AbortSignal) => request<{ message: string; incident_id: number }>('/incidents/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(incident) }, signal),
   getTopology: (signal?: AbortSignal) => request<Topology>('/topology', {}, signal), getServiceHealth: (signal?: AbortSignal) => request<ServiceHealth>('/service-health', {}, signal), simulateCascade: (signal?: AbortSignal) => request<{ failed_service: string; cascade_services: string[]; status: Record<string, string> }>('/simulate-cascade', {}, signal),
+  getDependencyTopology: (signal?: AbortSignal) => request<Topology>('/dependency/topology', {}, signal), getDependencyImpact: (serviceId: string, signal?: AbortSignal) => request<CascadePrediction>(`/dependency/impact/${encodeURIComponent(serviceId)}`, {}, signal),
   simulateAction: (payload: { metrics: { cpu_usage: number; latency: number }; action: string; context?: Record<string, string> }, signal?: AbortSignal) => request<{ success: boolean; data: SimulationResult }>('/simulator/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, signal),
   trainModel: (body: { data_path: string; contamination: number }, signal?: AbortSignal) => request<TrainingResponse>('/ml/train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, signal), getModelStatus: (signal?: AbortSignal) => request<ModelStatus>('/ml/model-status', {}, signal),
 };
