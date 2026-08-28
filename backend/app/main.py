@@ -2,14 +2,18 @@ import asyncio
 import os
 import threading
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 # Services
 from app.services.topology_service import get_topology
 from app.services.health_service import update_service_health
 from app.services.metrics_service import get_metrics_history
-from app.services.service_graph import simulate_failure
+from app.services.service_graph import (
+    UnknownServiceError,
+    analyze_dependency_impact,
+    simulate_failure,
+)
 
 # Models
 from app.models.anomaly_detector import detect_anomaly
@@ -132,6 +136,14 @@ def topology():
 @app.get("/service-health")
 def service_health():
     return update_service_health()
+
+
+@app.get("/service-dependencies/{service_id}/impact")
+def service_dependency_impact(service_id: str):
+    try:
+        return analyze_dependency_impact(service_id)
+    except UnknownServiceError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.get("/metrics/history")
