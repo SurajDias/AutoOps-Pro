@@ -104,19 +104,6 @@ def prediction():
     }
 
 
-@app.get("/incidents")
-def incidents():
-    if metrics["memory"] > 85:
-        return {
-            "incident": "Memory leak detected",
-            "severity": "high"
-        }
-
-    return {
-        "incident": "No active incidents"
-    }
-
-
 @app.get("/simulate-cascade")
 def simulate_cascade():
     return simulate_failure()
