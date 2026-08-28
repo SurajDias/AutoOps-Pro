@@ -419,7 +419,7 @@ export const LandingPage: React.FC = () => {
                   </div>
                   <div className="font-mono text-[10px] text-text-muted space-y-1.5 leading-relaxed">
                     <div>[04:22:15] <span className="text-emerald-400">OK</span> Ingested CPU=22.4% MEM=54.1% LAT=8ms</div>
-                    <div>[04:22:18] <span className="text-primary">INFO</span> Anomaly probability: minimal (p=0.02)</div>
+                    <div>[04:22:18] <span className="text-primary">INFO</span> Anomaly score: 0.02 (low)</div>
                     <div>[04:22:21] <span className="text-emerald-400">OK</span> All nodes healthy — cluster index 100%</div>
                     <div className="flex items-center gap-1"><span className="animate-blink text-accent">▋</span></div>
                   </div>

@@ -43,8 +43,12 @@ class AnomalyResult(BaseModel):
     """
     service: str
     is_anomaly: bool
-    anomaly_score: float = Field(..., description="Score from -1 (anomalous) to 1 (normal)")
-    confidence: float = Field(..., ge=0, le=1, description="Confidence in prediction (0-1)")
+    anomaly_score: float = Field(
+        ...,
+        ge=0,
+        le=1,
+        description="Hybrid rule/ML anomaly score (0-1), not a calibrated probability.",
+    )
     reason: str = Field(..., description="Human-readable explanation")
     
     model_config = ConfigDict(
@@ -52,8 +56,7 @@ class AnomalyResult(BaseModel):
             "example": {
                 "service": "payment",
                 "is_anomaly": True,
-                "anomaly_score": -0.45,
-                "confidence": 0.82,
+                "anomaly_score": 0.82,
                 "reason": "High CPU (85.5%) + Slow response time (1250ms)",
             }
         }

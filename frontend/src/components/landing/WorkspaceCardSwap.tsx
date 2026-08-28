@@ -90,7 +90,7 @@ const AnomalyDetectionCard: React.FC = () => (
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
         <Stat label="Anomaly Score"  value="0.94"   color="#EF4444" />
         <Stat label="Active Alerts"  value="3"      color="#F59E0B" />
-        <Stat label="Confidence"     value="94%"    color="#38BDF8" />
+        <Stat label="Score basis"    value="Model + rules" color="#38BDF8" />
         <Stat label="AI Status"      value="Active" color="#10B981" />
       </div>
       <div style={{ flex: 1, background: 'rgba(5,12,24,0.55)', borderRadius: 9, border: '1px solid rgba(239,68,68,0.1)', padding: '7px 9px' }}>
