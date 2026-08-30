@@ -28,6 +28,7 @@ from app.routes import system
 
 # Incident Management API
 from app.api.incident_api import router as incident_router
+from app.api.dependency_api import router as dependency_router
 
 
 DEFAULT_CORS_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
@@ -72,6 +73,7 @@ app.include_router(
     prefix="/incidents",
     tags=["Incident Management"]
 )
+app.include_router(dependency_router)
 
 # =========================
 # BACKGROUND METRICS THREAD

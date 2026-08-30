@@ -43,6 +43,17 @@ def _reverse_dependencies(
     return reverse
 
 
+def classify_blast_radius(impact_count: int) -> dict[str, str]:
+    """Classify impact deterministically; this analysis never depends on ML."""
+    if impact_count == 0:
+        return {"severity": "low", "blast_radius": "contained"}
+    if impact_count == 1:
+        return {"severity": "medium", "blast_radius": "limited"}
+    if impact_count <= 3:
+        return {"severity": "high", "blast_radius": "broad"}
+    return {"severity": "critical", "blast_radius": "critical"}
+
+
 def analyze_dependency_impact(
     failed_service: str,
     dependencies: Mapping[str, Iterable[str]] | None = None,
@@ -86,6 +97,8 @@ def analyze_dependency_impact(
     transitively_affected_services = [
         impact for impact in affected_services if impact["depth"] > 1
     ]
+    impact_count = len(affected_services)
+    classification = classify_blast_radius(impact_count)
 
     return {
         "failed_service": failed_service,
@@ -93,8 +106,17 @@ def analyze_dependency_impact(
         "directly_affected_services": directly_affected_services,
         "transitively_affected_services": transitively_affected_services,
         "affected_services": affected_services,
-        "impact_count": len(affected_services),
+        "impact_count": impact_count,
+        "cascade_depth": max((item["depth"] for item in affected_services), default=0),
+        "failure_paths": [
+            {
+                "service_id": item["service_id"],
+                "dependency_path": item["dependency_path"],
+            }
+            for item in affected_services
+        ],
         "depth_definition": "Shortest dependency distance to the failed service.",
+        **classification,
     }
 
 
