@@ -31,7 +31,11 @@ from app.api.incident_api import router as incident_router
 from app.api.dependency_api import router as dependency_router
 
 
-DEFAULT_CORS_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:5173,http://127.0.0.1:5173,"
+    "http://localhost:5174,http://127.0.0.1:5174,"
+    "http://localhost:5175,http://127.0.0.1:5175"
+)
 CORS_ALLOW_CREDENTIALS = True
 
 
