@@ -1,181 +1,21 @@
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { FiAlertTriangle, FiCheckCircle, FiClock, FiChevronDown, FiChevronUp, FiZap, FiDatabase, FiServer, FiWifi, FiInfo } from 'react-icons/fi';
-import GlassCard from '../../components/cards/GlassCard';
+import { useCallback, useEffect, useState } from 'react';
+import { Check, Search } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { api, type Incident, type IncidentPatterns, type IncidentStatistics } from '../../services/api';
 
-interface Incident {
-  id: number; title: string; status: 'resolved' | 'active' | 'investigating'; severity: 'critical' | 'warning' | 'info';
-  timestamp: string; duration: string; rootCause: string; impact: string; resolution: string;
-  affectedServices: string[]; icon: React.ElementType;
-  whyReasons: string[];
+export default function Incidents() {
+  const [incidents, setIncidents] = useState<Incident[]>([]); const [stats, setStats] = useState<IncidentStatistics | null>(null); const [patterns, setPatterns] = useState<IncidentPatterns | null>(null);
+  const [selected, setSelected] = useState<Incident | null>(null); const [filters, setFilters] = useState({ service_name: '', severity: '', root_cause: '' }); const [loading, setLoading] = useState(true); const [updating, setUpdating] = useState(false); const [error, setError] = useState<string | null>(null); const [notice, setNotice] = useState<string | null>(null); const navigate = useNavigate();
+  const load = useCallback(async () => { setLoading(true); try { const [all, statistics, aggregate] = await Promise.all([api.getIncidents(), api.getIncidentStatistics(), api.getIncidentPatterns()]); setIncidents(all); setStats(statistics); setPatterns(aggregate); setSelected(current => current ? all.find(item => item.id === current.id) || null : all[0] || null); setError(null); } catch (requestError) { setIncidents([]); setStats(null); setPatterns(null); setSelected(null); setError(requestError instanceof Error ? requestError.message : 'Incident data is unavailable.'); } finally { setLoading(false); } }, []);
+  useEffect(() => { void load(); }, [load]);
+  const search = async () => { setLoading(true); try { const response = await api.searchIncidents(filters); setIncidents(response.incidents); setSelected(response.incidents[0] || null); setError(null); } catch (requestError) { setIncidents([]); setSelected(null); setError(requestError instanceof Error ? requestError.message : 'Incident search failed.'); } finally { setLoading(false); } };
+  const resolve = async () => { if (!selected) return; setUpdating(true); try { const response = await api.updateIncident(selected.id, 'Resolved'); setSelected(response.incident); setIncidents(current => current.map(item => item.id === selected.id ? response.incident : item)); setNotice('Incident status updated to Resolved.'); await load(); } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Status update failed.'); } finally { setUpdating(false); } };
+  return <div className="p-8 bg-background min-h-screen text-text-primary"><div className="max-w-7xl mx-auto space-y-6"><header className="border-b border-white/[.06] pb-5"><h1 className="text-2.5xl font-bold font-heading text-white">Incident Management</h1><p className="text-text-muted text-xs mt-1">Persisted incident records and supported status management.</p></header>
+    {error && <div className="rounded-xl border border-white/15 bg-surface px-4 py-3 text-xs text-text-muted flex justify-between"><span>{error}</span><button onClick={() => void load()} className="text-primary font-semibold">Retry</button></div>}{notice && <p className="text-xs text-primary">{notice}</p>}
+    <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[['Open', stats?.open_incidents], ['High / Critical', stats?.high_severity_incidents], ['Resolved', stats?.resolved_incidents], ['Historical', stats?.total_incidents]].map(([label, count]) => <div className="bg-surface/80 border border-white/[.08] rounded-xl p-4" key={String(label)}><p className="text-[10px] uppercase tracking-wider text-text-muted">{label}</p><p className="text-xl font-bold text-white mt-2">{count ?? '—'}</p></div>)}</section>
+    <section className="bg-surface/80 border border-white/[.08] rounded-2xl p-4 grid md:grid-cols-4 gap-3"><input value={filters.service_name} onChange={event => setFilters({ ...filters, service_name: event.target.value })} placeholder="Service" className="bg-background border border-white/[.08] rounded-lg px-3 py-2 text-xs"/><input value={filters.root_cause} onChange={event => setFilters({ ...filters, root_cause: event.target.value })} placeholder="Root cause" className="bg-background border border-white/[.08] rounded-lg px-3 py-2 text-xs"/><input value={filters.severity} onChange={event => setFilters({ ...filters, severity: event.target.value })} placeholder="Severity" className="bg-background border border-white/[.08] rounded-lg px-3 py-2 text-xs"/><button onClick={() => void search()} className="rounded-lg bg-primary text-background text-xs font-bold flex justify-center items-center gap-2"><Search className="h-4 w-4"/>Search</button></section>
+    <section className="grid lg:grid-cols-5 gap-6"><div className="lg:col-span-3 bg-surface/80 border border-white/[.08] rounded-2xl overflow-hidden"><div className="p-4 border-b border-white/[.06] text-xs text-text-muted">Incident list · {loading ? 'Loading…' : incidents.length + ' records'}</div>{!loading && incidents.length === 0 && <p className="p-6 text-xs text-text-muted">No incidents found.</p>}<div className="divide-y divide-white/[.05]">{incidents.map(incident => <button key={incident.id} onClick={() => setSelected(incident)} className={'w-full text-left p-4 hover:bg-elevated/30 ' + (selected?.id === incident.id ? 'bg-primary/5' : '')}><div className="flex justify-between gap-3"><p className="text-sm text-white font-semibold">{'INC-' + String(incident.id).padStart(4, '0') + ' · ' + incident.service_name}</p><span className="text-[10px] text-accent">{incident.severity}</span></div><p className="mt-1 text-xs text-text-muted">{incident.root_cause}</p><p className="mt-2 text-[10px] text-text-muted">{incident.status} · {new Date(incident.timestamp).toLocaleString()}</p></button>)}</div></div>
+      <aside className="lg:col-span-2 bg-surface/80 border border-white/[.08] rounded-2xl p-5">{selected ? <div className="space-y-4 text-xs"><p className="text-[10px] uppercase tracking-widest text-text-muted">Incident detail · historical record</p><h2 className="text-lg font-heading font-bold text-white">{'INC-' + String(selected.id).padStart(4, '0')}</h2>{[['Service', selected.service_name], ['Severity', selected.severity], ['Anomaly type', selected.anomaly_type], ['Root cause', selected.root_cause], ['Recommendation', selected.recommendation], ['Status', selected.status], ['Timestamp', new Date(selected.timestamp).toLocaleString()]].map(([key, value]) => <div key={key}><p className="text-text-muted">{key}</p><p className="text-white mt-1">{value}</p></div>)}<div className="flex flex-wrap gap-2 pt-2">{selected.status !== 'Resolved' && <button disabled={updating} onClick={() => void resolve()} className="px-3 py-2 rounded-lg bg-primary text-background font-bold disabled:opacity-40 flex gap-1"><Check className="h-4 w-4"/>{updating ? 'Updating…' : 'Resolve'}</button>}<button onClick={() => navigate('/ai-simulator')} className="px-3 py-2 rounded-lg border border-accent/30 text-accent font-bold">Simulate recommended action</button></div></div> : <p className="text-xs text-text-muted">Select an incident to inspect its supported details.</p>}</aside></section>
+    <section className="bg-surface/80 border border-white/[.08] rounded-2xl p-5"><p className="text-[10px] uppercase tracking-widest text-text-muted">Pattern context</p>{patterns ? <div className="mt-3 grid md:grid-cols-3 gap-3 text-xs"><p>Most common root cause: <span className="text-white">{patterns.most_common_root_cause || 'No pattern data available'}</span></p><p>Most affected service: <span className="text-white">{patterns.most_affected_service || 'No pattern data available'}</span></p><p>Recurring records: <span className="text-white">{patterns.recurring_incidents}</span></p></div> : <p className="mt-2 text-xs text-text-muted">No pattern data available.</p>}</section>
+  </div></div>;
 }
-
-const incidents: Incident[] = [
-  {
-    id: 1, title: 'Database Connection Pool Exhaustion', status: 'resolved', severity: 'critical',
-    timestamp: '2026-03-29 14:23 UTC', duration: '12 min',
-    rootCause: 'Connection leak in order-service v3.2.1 caused pool saturation. Unclosed connections accumulated during peak traffic window.',
-    impact: 'Payment processing latency increased 340%. 1,240 transactions affected. Cascade delay to notification service.',
-    resolution: 'AI agent auto-scaled read replicas and killed stale connections. Hotfix deployed to order-service v3.2.2.',
-    affectedServices: ['PostgreSQL Primary', 'Order Service', 'Payment Service'], icon: FiDatabase,
-    whyReasons: ['Connection leak detected in order-service v3.2.1', 'Peak traffic window exceeded 2x capacity', 'Similar to pattern from INC-2755 (2 weeks ago)'],
-  },
-  {
-    id: 2, title: 'API Gateway Rate Limit Breach', status: 'active', severity: 'warning',
-    timestamp: '2026-03-29 16:05 UTC', duration: 'Ongoing',
-    rootCause: 'Sudden traffic spike from partner integration (3x normal volume). Rate limiter configured for old traffic baseline.',
-    impact: '15% of API requests returning 429 errors. Partner webhook deliveries delayed.',
-    resolution: 'AI agent recommends dynamic rate limit adjustment. Awaiting operator confirmation.',
-    affectedServices: ['API Gateway', 'Auth Service'], icon: FiWifi,
-    whyReasons: ['Partner API traffic 3x above baseline', 'Rate limiter config not updated since v2.8', 'No auto-scaling policy for gateway tier'],
-  },
-  {
-    id: 3, title: 'Memory Leak in Auth Service', status: 'resolved', severity: 'critical',
-    timestamp: '2026-03-28 09:12 UTC', duration: '28 min',
-    rootCause: 'JWT token cache not evicting expired entries. Memory usage grew linearly over 6 hours until OOM kill triggered.',
-    impact: 'Auth service restarted 3 times. 890 users experienced login failures during restart windows.',
-    resolution: 'AI predicted failure 45 min before OOM. Graceful restart executed with zero-downtime rolling deployment.',
-    affectedServices: ['Auth Service', 'API Gateway'], icon: FiServer,
-    whyReasons: ['JWT cache eviction policy misconfigured', 'Memory growth rate matched OOM pattern', 'AI predicted OOM 45 min in advance'],
-  },
-  {
-    id: 4, title: 'Cascade Failure in Payment Pipeline', status: 'investigating', severity: 'warning',
-    timestamp: '2026-03-29 15:45 UTC', duration: 'Ongoing',
-    rootCause: 'Under investigation. Correlates with upstream database incident. Circuit breaker tripped on payment-processor.',
-    impact: 'Payment retries increasing. Queue depth growing at 120 msgs/min.',
-    resolution: 'AI agent monitoring queue depth. Auto-remediation will trigger if queue exceeds 5,000 threshold.',
-    affectedServices: ['Payment Service', 'Order Service', 'Notification Service'], icon: FiZap,
-    whyReasons: ['Correlates with INC-1 database exhaustion', 'Circuit breaker tripped 3 times in 10 min', 'Message queue backlog growing exponentially'],
-  },
-];
-
-const getStatusStyle = (status: string) => {
-  switch (status) {
-    case 'resolved': return { text: 'text-accent', bg: 'bg-accent/10', border: 'border-accent/30', dot: 'bg-accent' };
-    case 'active': return { text: 'text-red-400', bg: 'bg-red-400/10', border: 'border-red-400/30', dot: 'bg-red-400 animate-pulse' };
-    case 'investigating': return { text: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-400/30', dot: 'bg-yellow-400 animate-pulse' };
-    default: return { text: 'text-text-muted', bg: 'bg-white/5', border: 'border-white/10', dot: 'bg-white/50' };
-  }
-};
-
-const getSeverityStyle = (severity: string) => {
-  switch (severity) {
-    case 'critical': return 'text-red-400 bg-red-400/10 border-red-400/30';
-    case 'warning': return 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30';
-    default: return 'text-blue-400 bg-blue-400/10 border-blue-400/30';
-  }
-};
-
-const Incidents: React.FC = () => {
-  const [expandedId, setExpandedId] = useState<number | null>(1);
-
-  return (
-    <div className="space-y-6">
-      <header className="flex items-center justify-between mb-2">
-        <div>
-          <h1 className="text-2xl font-bold text-white mb-1 tracking-tight">Incident Reports</h1>
-          <p className="text-text-muted text-sm">AI-generated root cause analysis and resolution tracking</p>
-        </div>
-        <div className="flex gap-3">
-          <button className="px-4 py-2 rounded-lg bg-card border border-white/5 text-sm font-medium hover:bg-white/5 transition-colors flex items-center gap-2">
-            <FiClock size={14} /> Last 48 Hours
-          </button>
-        </div>
-      </header>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {[
-          { label: 'Total Incidents', value: '4', icon: FiAlertTriangle, color: 'text-yellow-400' },
-          { label: 'Active Now', value: '2', icon: FiZap, color: 'text-red-400' },
-          { label: 'Resolved (AI)', value: '2', icon: FiCheckCircle, color: 'text-accent' },
-          { label: 'Avg Resolution', value: '20 min', icon: FiClock, color: 'text-blue-400' },
-        ].map((stat, idx) => (
-          <GlassCard key={idx} delay={0.1 * idx} className="flex items-center gap-4 h-20">
-            <div className={`p-2 rounded-lg bg-white/5 ${stat.color}`}><stat.icon size={20} /></div>
-            <div>
-              <p className="text-xs text-text-muted">{stat.label}</p>
-              <p className="text-xl font-bold text-white">{stat.value}</p>
-            </div>
-          </GlassCard>
-        ))}
-      </div>
-
-      <div className="space-y-4">
-        {incidents.map((incident, idx) => {
-          const statusStyle = getStatusStyle(incident.status);
-          const isExpanded = expandedId === incident.id;
-          return (
-            <motion.div key={incident.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 * idx, duration: 0.4 }} className="glass-card overflow-hidden">
-              <button onClick={() => setExpandedId(isExpanded ? null : incident.id)} className="w-full p-5 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors">
-                <div className="flex items-center gap-4">
-                  <div className={`p-2.5 rounded-xl ${statusStyle.bg} ${statusStyle.text}`}><incident.icon size={20} /></div>
-                  <div>
-                    <h3 className="text-white font-semibold text-sm">{incident.title}</h3>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="text-text-muted text-xs flex items-center gap-1"><FiClock size={10} /> {incident.timestamp}</span>
-                      <span className="text-text-muted text-xs">Duration: {incident.duration}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full ${statusStyle.dot}`} />
-                    <span className={`text-xs font-semibold uppercase tracking-wider ${statusStyle.text}`}>{incident.status}</span>
-                  </div>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase font-bold border ${getSeverityStyle(incident.severity)}`}>{incident.severity}</span>
-                  {isExpanded ? <FiChevronUp className="text-text-muted" /> : <FiChevronDown className="text-text-muted" />}
-                </div>
-              </button>
-              <AnimatePresence>
-                {isExpanded && (
-                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.3 }} className="overflow-hidden">
-                    <div className="px-5 pb-5 space-y-3 border-t border-white/5 pt-4">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <div className="bg-background/40 rounded-xl p-4">
-                          <h4 className="text-xs text-text-muted font-semibold uppercase tracking-wider mb-2">Root Cause</h4>
-                          <p className="text-sm text-text-primary leading-relaxed">{incident.rootCause}</p>
-                        </div>
-                        <div className="bg-background/40 rounded-xl p-4">
-                          <h4 className="text-xs text-text-muted font-semibold uppercase tracking-wider mb-2">System Impact</h4>
-                          <p className="text-sm text-text-primary leading-relaxed">{incident.impact}</p>
-                        </div>
-                        <div className="bg-background/40 rounded-xl p-4">
-                          <h4 className="text-xs text-text-muted font-semibold uppercase tracking-wider mb-2">Resolution</h4>
-                          <p className="text-sm text-text-primary leading-relaxed">{incident.resolution}</p>
-                        </div>
-                      </div>
-
-                      {/* FEATURE 5: Explainability Panel */}
-                      <div className="bg-background/30 border border-white/5 rounded-xl p-4">
-                        <div className="flex items-center gap-1.5 mb-2">
-                          <FiInfo size={12} className="text-text-muted" />
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Why This Happened</span>
-                        </div>
-                        <ul className="space-y-1.5">
-                          {incident.whyReasons.map((reason, i) => (
-                            <motion.li key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 * i }} className="flex items-start gap-2 text-xs text-text-secondary">
-                              <span className="w-1 h-1 rounded-full bg-text-muted mt-1.5 shrink-0" />
-                              {reason}
-                            </motion.li>
-                          ))}
-                        </ul>
-                      </div>
-
-                      <div className="flex gap-2 flex-wrap">
-                        {incident.affectedServices.map((svc) => (
-                          <span key={svc} className="px-3 py-1 rounded-full text-xs bg-white/5 text-text-secondary border border-white/10">{svc}</span>
-                        ))}
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
-
-export default Incidents;

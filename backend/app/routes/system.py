@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+import logging
+
+from fastapi import APIRouter, HTTPException
 from app.utils.metrics_generator import (
     SCENARIOS,
     get_metrics_mode,
@@ -18,7 +20,7 @@ from app.database.postgres import create_incident_record, find_similar_incident
 router   = APIRouter()
 history  = []
 _sim     = WhatIfSimulator()   # used only for _select_best_action()
-_last_recorded_incident = None
+logger = logging.getLogger(__name__)
 
 
 def _adjust_confidence(confidence, trends):
@@ -95,38 +97,16 @@ def _similar_incident(primary_issue):
     database_match = find_similar_incident(primary_issue)
     if database_match is not None:
         return database_match
-
-    issue = str(primary_issue).lower()
-    if "memory" in issue:
-        return "INC-1042: Auth service memory leak recovered by GC tuning and rolling restart."
-    if "response" in issue or "latency" in issue:
-        return "INC-0977: Database pool saturation caused payment latency during launch traffic."
-    if "error" in issue:
-        return "INC-0888: Gateway error burst resolved by restart and rate-limit update."
-    if "cpu" in issue:
-        return "INC-0921: CPU saturation prevented by horizontal scaling."
-    return "No close historical incident found."
+    return "Historical incident lookup unavailable."
 
 
 def _record_incident_if_needed(scenario, root_result, anomaly_reason, decision):
     """Create one record per active high-severity detection."""
-    global _last_recorded_incident
-
     severity = str(root_result.get("status", "")).lower()
     if severity not in ("high", "critical"):
-        _last_recorded_incident = None
         return
 
     root_cause = root_result.get("summary") or root_result.get("primary_issue") or "Unknown"
-    incident_signature = (
-        scenario.get("service", "payment"),
-        severity,
-        root_cause,
-        anomaly_reason,
-    )
-    if incident_signature == _last_recorded_incident:
-        return
-
     created = create_incident_record({
         "service_name": scenario.get("service", "payment"),
         "severity": severity.title(),
@@ -135,8 +115,12 @@ def _record_incident_if_needed(scenario, root_result, anomaly_reason, decision):
         "recommendation": decision.get("action", "Investigate incident"),
         "status": "Open",
     })
-    if created:
-        _last_recorded_incident = incident_signature
+    if not created:
+        logger.error("Unable to persist automatic incident for active high-severity condition")
+        raise HTTPException(
+            status_code=503,
+            detail="Current analysis is available, but incident persistence is unavailable. Check the incident database.",
+        )
 
 
 @router.get("/system-status")
@@ -236,8 +220,6 @@ def change_metrics_mode(mode: str):
 
 @router.post("/demo/scenario/{name}")
 def activate_demo_scenario(name: str):
-    global _last_recorded_incident
-
     # Existing dashboard controls should always resume the demo source.
     set_metrics_mode("demo")
     scenario = set_scenario(name)
@@ -246,6 +228,5 @@ def activate_demo_scenario(name: str):
 
     if name == "fixed":
         history.clear()
-        _last_recorded_incident = None
 
     return {"success": True, "scenario": scenario}

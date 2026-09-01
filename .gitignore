@@ -11,5 +11,11 @@ backend/system_metrics.csv
 __pycache__/
 *.pyc
 
-# Environment files
+# Environment files (examples are intentionally tracked)
 .env
+.env.*
+!.env.example
+
+# Local development backups
+frontend_backup/
+*.bak

@@ -1,234 +1,250 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { FiServer, FiDatabase, FiShield, FiShoppingCart, FiCreditCard, FiGlobe, FiArrowRight } from 'react-icons/fi';
-import GlassCard from '../../components/cards/GlassCard';
+import { Server, Database, Activity, Cpu, Play } from 'lucide-react';
+import { api } from '../../services/api';
 
-interface ServiceNode {
-  id: string; name: string; icon: React.ElementType;
-  status: 'healthy' | 'degraded' | 'down';
-  latency: string; uptime: string; requests: string;
-  x: number; y: number;
+interface TopologyNode { id: string; label: string; name?: string; }
+interface TopologyEdge { source: string; target: string; }
+interface ServiceNode extends TopologyNode {
+  x: number;
+  y: number;
+  status: string;
+  type: string;
 }
 
-interface ServiceEdge { from: string; to: string; status: 'healthy' | 'degraded'; }
+export default function ServiceMap() {
+  const [nodes, setNodes] = useState<ServiceNode[]>([]);
+  const [edges, setEdges] = useState<TopologyEdge[]>([]);
+  const [selectedNode, setSelectedNode] = useState<ServiceNode | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [cascade, setCascade] = useState<{ failed_service: string; cascade_services: string[]; status: Record<string, string> } | null>(null);
+  const [cascadeError, setCascadeError] = useState<string | null>(null);
+  const [simulating, setSimulating] = useState(false);
 
-const services: ServiceNode[] = [
-  { id: 'gateway', name: 'API Gateway', icon: FiGlobe, status: 'healthy', latency: '12ms', uptime: '99.99%', requests: '4.2k/s', x: 50, y: 8 },
-  { id: 'auth', name: 'Auth Service', icon: FiShield, status: 'healthy', latency: '8ms', uptime: '99.98%', requests: '1.8k/s', x: 20, y: 35 },
-  { id: 'order', name: 'Order Service', icon: FiShoppingCart, status: 'degraded', latency: '145ms', uptime: '99.85%', requests: '920/s', x: 50, y: 35 },
-  { id: 'payment', name: 'Payment Service', icon: FiCreditCard, status: 'degraded', latency: '210ms', uptime: '99.72%', requests: '680/s', x: 80, y: 35 },
-  { id: 'database', name: 'Database', icon: FiDatabase, status: 'healthy', latency: '3ms', uptime: '99.99%', requests: '8.1k/s', x: 35, y: 65 },
-  { id: 'cache', name: 'Cache Layer', icon: FiServer, status: 'healthy', latency: '1ms', uptime: '100%', requests: '12k/s', x: 65, y: 65 },
-];
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setSelectedNode(null); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
-const edges: ServiceEdge[] = [
-  { from: 'gateway', to: 'auth', status: 'healthy' },
-  { from: 'gateway', to: 'order', status: 'degraded' },
-  { from: 'gateway', to: 'payment', status: 'degraded' },
-  { from: 'order', to: 'database', status: 'healthy' },
-  { from: 'order', to: 'cache', status: 'healthy' },
-  { from: 'payment', to: 'database', status: 'healthy' },
-  { from: 'auth', to: 'database', status: 'healthy' },
-  { from: 'auth', to: 'cache', status: 'healthy' },
-];
+  useEffect(() => {
+    const controller = new AbortController();
+    Promise.all([api.getTopology(controller.signal), api.getServiceHealth(controller.signal)])
+      .then(([topology, health]) => {
+        if (topology?.nodes && topology?.edges) {
+          setError(null);
+          const positions: Record<string, [number, number]> = {
+            gateway: [150, 200], auth: [360, 100], order: [360, 235],
+            payment: [590, 170], inventory: [590, 300], db: [730, 235],
+          };
+          setNodes((topology.nodes as TopologyNode[]).map((node, index) => ({
+            ...node,
+            x: positions[node.id]?.[0] ?? 120 + index * 110,
+            y: positions[node.id]?.[1] ?? 200,
+            status: (health as Record<string, string>)?.[node.id] === 'failed' ? 'critical' : (health as Record<string, string>)?.[node.id] || 'healthy',
+            type: node.id === 'db' ? 'database' : node.id === 'gateway' ? 'gateway' : 'service',
+          })));
+          setEdges(topology.edges);
+          setLastRefresh(new Date());
+        } else throw new Error('Topology response was incomplete');
+      })
+      .catch((requestError) => { if (!(requestError instanceof DOMException && requestError.name === 'AbortError')) setError(requestError instanceof Error ? requestError.message : 'Topology request failed'); });
+    return () => controller.abort();
+  }, []);
 
-const getStatusColor = (status: string) => {
-  switch (status) {
-    case 'healthy': return { ring: 'border-accent', glow: 'shadow-[0_0_20px_rgba(34,197,94,0.3)]', dot: 'bg-accent', text: 'text-accent', pulse: '' };
-    case 'degraded': return { ring: 'border-yellow-400', glow: 'shadow-[0_0_25px_rgba(234,179,8,0.35)]', dot: 'bg-yellow-400 animate-pulse', text: 'text-yellow-400', pulse: 'animate-pulse' };
-    case 'down': return { ring: 'border-red-500', glow: 'shadow-[0_0_30px_rgba(239,68,68,0.4)]', dot: 'bg-red-500 animate-pulse', text: 'text-red-500', pulse: 'animate-pulse' };
-    default: return { ring: 'border-white/20', glow: '', dot: 'bg-white/40', text: 'text-text-muted', pulse: '' };
-  }
-};
+  const simulateCascade = async () => {
+    setSimulating(true); setCascade(null); setCascadeError(null);
+    try { setCascade(await api.simulateCascade()); }
+    catch (requestError) { setCascadeError(requestError instanceof Error ? requestError.message : 'Cascade simulation unavailable.'); }
+    finally { setSimulating(false); }
+  };
 
-const ServiceMap: React.FC = () => {
-  const [selectedService, setSelectedService] = useState<ServiceNode | null>(null);
-  const [hoveredService, setHoveredService] = useState<string | null>(null);
+  const getStatusColor = (status: string) => {
+    // Preserving ONLY shades of blue, navy, and white
+    switch (status) {
+      case 'critical':
+        return '#F7FAFC'; // White highlight for critical failures
+      case 'warning':
+      case 'degraded':
+        return '#63D6FF'; // Cyan accent for warnings/degraded
+      default:
+        return '#4F8BFF'; // Primary blue for healthy
+    }
+  };
 
   return (
-    <div className="space-y-6">
-      <header className="flex items-center justify-between mb-2">
-        <div>
-          <h1 className="text-2xl font-bold text-white mb-1 tracking-tight">Service Dependency Map</h1>
-          <p className="text-text-muted text-sm">Microservice topology and cascade failure prediction</p>
-        </div>
-        <div className="flex items-center gap-4 text-xs text-text-muted">
-          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-accent" /> Healthy</span>
-          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-400" /> Degraded</span>
-          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" /> Down</span>
-        </div>
-      </header>
+    <div className="p-8 bg-background min-h-screen text-text-primary flex flex-col">
+      {/* Header */}
+      <div className="border-b border-white/[0.06] pb-5 mb-6">
+        <h1 className="text-2.5xl font-bold font-heading text-white tracking-tight">Service Topology</h1>
+        <p className="text-text-muted text-xs mt-1 leading-relaxed">Static backend topology · service health is synthetic/random, not production discovery or tracing.</p>
+        <p className="text-text-muted text-[10px] mt-2">Topology source: backend static graph · Health source: synthetic backend generator{lastRefresh ? ' · Refreshed ' + lastRefresh.toLocaleTimeString() : ''}</p>
+      </div>
+      {error && <p className="mb-4 text-xs text-primary">{error}</p>}
+      <div className="mb-4 flex flex-wrap items-center gap-3"><button onClick={() => void simulateCascade()} disabled={simulating} className="px-4 py-2 rounded-lg border border-accent/30 bg-accent/10 text-accent text-xs font-bold disabled:opacity-50 flex gap-2"><Play className="h-3.5 w-3.5 fill-current"/>{simulating ? 'Simulating…' : 'Simulate Cascade'}</button><span className="text-[10px] text-text-muted">SIMULATION ONLY</span></div>
+      {cascadeError && <div className="mb-4 rounded-xl border border-white/15 bg-surface px-4 py-3 text-xs text-text-muted">{cascadeError}</div>}
+      {cascade && <div className="mb-4 rounded-xl border border-accent/25 bg-surface p-4 text-xs"><p className="text-accent font-bold tracking-wider">CASCADE SIMULATION</p><p className="mt-2 text-white">Failed service: {cascade.failed_service}</p><p className="mt-1 text-text-muted">Affected services: {cascade.cascade_services.length ? cascade.cascade_services.join(', ') : 'None returned by backend'}</p></div>}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <GlassCard delay={0.1} className="relative h-[520px] overflow-hidden">
-            {/* SVG edges with animated flow */}
-            <svg className="absolute inset-0 w-full h-full pointer-events-none z-0" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="flowGreen" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="rgba(34,197,94,0.1)" />
-                  <stop offset="50%" stopColor="rgba(34,197,94,0.6)" />
-                  <stop offset="100%" stopColor="rgba(34,197,94,0.1)" />
-                </linearGradient>
-                <linearGradient id="flowYellow" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="rgba(234,179,8,0.1)" />
-                  <stop offset="50%" stopColor="rgba(234,179,8,0.6)" />
-                  <stop offset="100%" stopColor="rgba(234,179,8,0.1)" />
-                </linearGradient>
-              </defs>
-              {edges.map((edge, idx) => {
-                const fromNode = services.find(s => s.id === edge.from)!;
-                const toNode = services.find(s => s.id === edge.to)!;
-                const color = edge.status === 'healthy' ? 'rgba(34,197,94,0.25)' : 'rgba(234,179,8,0.35)';
-                const isHighlighted = hoveredService === edge.from || hoveredService === edge.to;
-                return (
-                  <g key={idx}>
-                    <motion.line
-                      x1={`${fromNode.x}%`} y1={`${fromNode.y + 5}%`}
-                      x2={`${toNode.x}%`} y2={`${toNode.y}%`}
-                      stroke={isHighlighted ? (edge.status === 'healthy' ? 'rgba(34,197,94,0.6)' : 'rgba(234,179,8,0.7)') : color}
-                      strokeWidth={isHighlighted ? 3 : 2}
-                      strokeDasharray={edge.status === 'degraded' ? '6 4' : '0'}
-                      initial={{ pathLength: 0, opacity: 0 }}
-                      animate={{ pathLength: 1, opacity: 1 }}
-                      transition={{ delay: 0.3 + idx * 0.08, duration: 0.6 }}
-                    />
-                    {/* Animated flow particle */}
-                    <motion.circle
-                      r={isHighlighted ? 4 : 3}
-                      fill={edge.status === 'healthy' ? '#22c55e' : '#eab308'}
-                      opacity={0.8}
-                      initial={{ opacity: 0 }}
-                      animate={{
-                        cx: [`${fromNode.x}%`, `${toNode.x}%`],
-                        cy: [`${fromNode.y + 5}%`, `${toNode.y}%`],
-                        opacity: [0, 0.8, 0.8, 0],
-                      }}
-                      transition={{
-                        duration: edge.status === 'degraded' ? 3 : 2,
-                        repeat: Infinity,
-                        delay: idx * 0.4,
-                        ease: 'linear',
-                      }}
-                    />
-                  </g>
-                );
-              })}
-            </svg>
+      <div className="flex-1 bg-surface/65 border border-white/[0.08] rounded-2xl relative overflow-hidden flex shadow-glass min-h-[500px]">
+        {/* SVG Canvas Topology */}
+        <div className="flex-grow relative h-full">
+          {!error && nodes.length === 0 && <p className="absolute inset-0 flex items-center justify-center text-xs text-text-muted">Loading topology…</p>}
+          <svg className="w-full h-full min-h-[450px]" viewBox="0 0 800 400">
+            {/* Connection Edges */}
+            {edges.map((edge, i) => {
+              const source = nodes.find(n => n.id === edge.source);
+              const target = nodes.find(n => n.id === edge.target);
+              if (!source || !target) return null;
 
-            {/* Service nodes with hover tooltips */}
-            {services.map((service, idx) => {
-              const colors = getStatusColor(service.status);
-              const isHovered = hoveredService === service.id;
+              const isCriticalEdge = source.status === 'critical' || target.status === 'critical';
+              const strokeColor = isCriticalEdge ? 'rgba(255,255,255,0.2)' : 'rgba(79,139,255,0.3)';
+
               return (
-                <motion.div
-                  key={service.id}
-                  initial={{ opacity: 0, scale: 0.5 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: 0.15 * idx, duration: 0.4 }}
-                  whileHover={{ scale: 1.15, zIndex: 50 }}
-                  onClick={() => setSelectedService(service)}
-                  onMouseEnter={() => setHoveredService(service.id)}
-                  onMouseLeave={() => setHoveredService(null)}
-                  className="absolute cursor-pointer z-10"
-                  style={{ left: `${service.x}%`, top: `${service.y}%`, transform: 'translate(-50%, -50%)' }}
-                >
-                  <div className={`flex flex-col items-center gap-2 p-4 rounded-2xl bg-card/90 border-2 ${colors.ring} ${colors.glow} backdrop-blur-sm transition-all hover:bg-card ${colors.pulse}`}>
-                    <div className="relative">
-                      <service.icon size={24} className={colors.text} />
-                      <span className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full ${colors.dot}`} />
-                    </div>
-                    <span className="text-xs font-semibold text-white whitespace-nowrap">{service.name}</span>
-                    <span className="text-[10px] text-text-muted">{service.latency}</span>
-                  </div>
-
-                  {/* FEATURE 3: Hover Tooltip */}
-                  {isHovered && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="absolute left-1/2 -translate-x-1/2 -bottom-[90px] bg-card border border-white/10 rounded-xl p-3 shadow-xl z-50 min-w-[160px]"
-                    >
-                      <div className="text-[10px] space-y-1.5">
-                        <div className="flex justify-between"><span className="text-text-muted">Status</span><span className={`font-bold uppercase ${colors.text}`}>{service.status}</span></div>
-                        <div className="flex justify-between"><span className="text-text-muted">Latency</span><span className="text-white font-medium">{service.latency}</span></div>
-                        <div className="flex justify-between"><span className="text-text-muted">Throughput</span><span className="text-white font-medium">{service.requests}</span></div>
-                        <div className="flex justify-between"><span className="text-text-muted">Deps</span><span className="text-white font-medium">{edges.filter(e => e.from === service.id || e.to === service.id).length}</span></div>
-                      </div>
-                      <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-card border-l border-t border-white/10 rotate-45" />
-                    </motion.div>
-                  )}
-                </motion.div>
+                <motion.line
+                  key={i}
+                  x1={source.x}
+                  y1={source.y}
+                  x2={target.x}
+                  y2={target.y}
+                  stroke={strokeColor}
+                  strokeWidth="1.5"
+                  strokeDasharray="5,5"
+                  initial={{ pathLength: 0 }}
+                  animate={{ pathLength: 1 }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                />
               );
             })}
-          </GlassCard>
+
+            {/* Nodes */}
+            {nodes.map((node) => {
+              const color = getStatusColor(node.status);
+              const isSelected = selectedNode?.id === node.id;
+
+              return (
+                <g
+                  key={node.id}
+                  onClick={() => setSelectedNode(node)}
+                  onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedNode(node); } }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Inspect ${node.label || node.name}; synthetic health ${node.status}`}
+                  className="cursor-pointer group"
+                >
+                  {/* Orbit Glow Ring for selected node */}
+                  {isSelected && (
+                    <circle
+                      cx={node.x}
+                      cy={node.y}
+                      r="32"
+                      fill="none"
+                      stroke={color}
+                      strokeWidth="1"
+                      className="opacity-30 animate-pulse-ring"
+                    />
+                  )}
+
+                  {/* Node Circle */}
+                  <circle
+                    cx={node.x}
+                    cy={node.y}
+                    r="22"
+                    fill="#081120"
+                    stroke={color}
+                    strokeWidth={isSelected ? '2.5' : '1.5'}
+                    className="transition-all duration-300 group-hover:stroke-accent"
+                  />
+
+                  {/* Type Icon indicators inside the node */}
+                  <g className="opacity-80" transform={`translate(${node.x - 7}, ${node.y - 7})`}>
+                    {node.type === 'database' ? (
+                      <Database className="w-3.5 h-3.5 text-text-primary" strokeWidth={1.5} />
+                    ) : node.type === 'gateway' ? (
+                      <Cpu className="w-3.5 h-3.5 text-text-primary" strokeWidth={1.5} />
+                    ) : (
+                      <Server className="w-3.5 h-3.5 text-text-primary" strokeWidth={1.5} />
+                    )}
+                  </g>
+
+                  {/* Node Label Text */}
+                  <text
+                    x={node.x}
+                    y={node.y + 36}
+                    fill={isSelected ? '#FFFFFF' : '#9FB0C7'}
+                    fontSize="11"
+                    fontWeight={isSelected ? '600' : '400'}
+                    textAnchor="middle"
+                    className="font-heading transition-colors"
+                  >
+                    {node.label || node.name}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
         </div>
 
-        <div className="lg:col-span-1 space-y-4">
-          {selectedService ? (
-            <motion.div key={selectedService.id} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3 }}>
-              <GlassCard delay={0} className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className={`p-3 rounded-xl bg-white/5 ${getStatusColor(selectedService.status).text}`}><selectedService.icon size={24} /></div>
-                  <div>
-                    <h3 className="text-white font-bold">{selectedService.name}</h3>
-                    <span className={`text-xs font-semibold uppercase ${getStatusColor(selectedService.status).text}`}>{selectedService.status}</span>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  {[{ label: 'Latency', value: selectedService.latency }, { label: 'Uptime', value: selectedService.uptime }, { label: 'Throughput', value: selectedService.requests }].map((metric) => (
-                    <div key={metric.label} className="flex justify-between items-center bg-background/40 rounded-xl p-3">
-                      <span className="text-xs text-text-muted">{metric.label}</span>
-                      <span className="text-sm font-bold text-white">{metric.value}</span>
-                    </div>
-                  ))}
-                </div>
-                <div>
-                  <h4 className="text-xs text-text-muted font-semibold uppercase mb-2">Dependencies</h4>
-                  <div className="space-y-2">
-                    {edges.filter(e => e.from === selectedService.id || e.to === selectedService.id).map((edge, i) => {
-                      const otherSvc = services.find(s => s.id === (edge.from === selectedService.id ? edge.to : edge.from))!;
-                      return (
-                        <div key={i} className="flex items-center gap-2 text-xs text-text-secondary">
-                          <FiArrowRight size={12} className={edge.status === 'healthy' ? 'text-accent' : 'text-yellow-400'} />
-                          <span>{otherSvc.name}</span>
-                          <span className={`ml-auto ${edge.status === 'healthy' ? 'text-accent' : 'text-yellow-400'}`}>{edge.status}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </GlassCard>
-            </motion.div>
-          ) : (
-            <GlassCard delay={0.2} className="flex flex-col items-center justify-center h-64 text-center">
-              <FiServer size={32} className="text-text-muted mb-3" />
-              <p className="text-sm text-text-muted">Click a service node to view details</p>
-            </GlassCard>
-          )}
+        {/* Selected Node Drawer */}
+        {selectedNode && (
+          <motion.div
+            initial={{ x: 300, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 lg:border-l border-white/[0.08] bg-elevated/75 p-6 backdrop-blur-md flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex justify-between items-start mb-4">
+                <h2 className="text-lg font-bold font-heading text-white tracking-tight leading-tight">
+                  {selectedNode.label || selectedNode.name}
+                </h2>
+                <button
+                  onClick={() => setSelectedNode(null)}
+                  aria-label="Close service detail"
+                  className="text-text-muted hover:text-white text-xs font-mono"
+                >
+                  ESC
+                </button>
+              </div>
 
-          <GlassCard delay={0.3} className="space-y-3">
-            <h3 className="text-sm font-semibold text-white">Cascade Failure Risk</h3>
-            {[
-              { path: 'Gateway → Order → DB', risk: 72, color: 'bg-yellow-400' },
-              { path: 'Gateway → Payment → DB', risk: 45, color: 'bg-blue-400' },
-              { path: 'Auth → Cache', risk: 12, color: 'bg-accent' },
-            ].map((item, idx) => (
-              <div key={idx} className="space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="text-text-muted">{item.path}</span>
-                  <span className="text-white font-semibold">{item.risk}%</span>
+              {/* Status Badge */}
+              <div className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider mb-6 border ${
+                selectedNode.status === 'critical'
+                  ? 'bg-white/10 border-white/20 text-white shadow-[0_0_10px_rgba(255,255,255,0.15)]'
+                  : selectedNode.status === 'warning' || selectedNode.status === 'degraded'
+                  ? 'bg-accent/15 border-accent/20 text-accent'
+                  : 'bg-primary/15 border-primary/20 text-primary'
+              }`}>
+                <span className="w-1.5 h-1.5 bg-current rounded-full" />
+                <span>{selectedNode.status}</span>
+              </div>
+
+              {/* Metrics */}
+              <div className="space-y-4">
+                <div className="p-3.5 bg-background/50 rounded-xl border border-white/[0.05]">
+                  <p className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">CPU Usage</p>
+                  <p className="font-bold text-base text-white font-heading mt-0.5">Not available</p>
                 </div>
-                <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
-                  <motion.div initial={{ width: 0 }} animate={{ width: `${item.risk}%` }} transition={{ delay: 0.5 + idx * 0.15, duration: 0.8 }} className={`h-full rounded-full ${item.color}`} />
+                <div className="p-3.5 bg-background/50 rounded-xl border border-white/[0.05]">
+                  <p className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">Memory Allocation</p>
+                  <p className="font-bold text-base text-white font-heading mt-0.5">Not available</p>
+                </div>
+                <div className="p-3.5 bg-background/50 rounded-xl border border-white/[0.05]">
+                  <p className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">Network In/Out</p>
+                  <p className="font-bold text-base text-white font-heading mt-0.5">Not available</p>
                 </div>
               </div>
-            ))}
-          </GlassCard>
-        </div>
+            </div>
+
+            {/* No tracing API is currently available. */}
+            <div className="pt-4 border-t border-white/[0.06]">
+              <div className="w-full py-2.5 border border-white/[0.08] text-text-muted text-xs font-semibold rounded-xl flex items-center justify-center space-x-2">
+                <Activity className="w-3.5 h-3.5" />
+                <span>Trace inspection is not available</span>
+              </div>
+            </div>
+          </motion.div>
+        )}
       </div>
     </div>
   );
-};
-
-export default ServiceMap;
+}

@@ -1,8 +1,6 @@
 import random
 
-services = ["gateway", "auth", "order", "payment", "inventory", "db"]
-
-service_health = {}
+from app.services.service_graph import SERVICE_IDS
 
 def evaluate_health(cpu, memory, response):
 
@@ -17,13 +15,10 @@ def evaluate_health(cpu, memory, response):
 
 
 def update_service_health():
-
-    for service in services:
-
+    service_health = {}
+    for service in SERVICE_IDS:
         cpu = random.randint(20, 95)
         memory = random.randint(30, 95)
         response = random.randint(80, 900)
-
         service_health[service] = evaluate_health(cpu, memory, response)
-
     return service_health

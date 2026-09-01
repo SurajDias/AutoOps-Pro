@@ -131,7 +131,7 @@ class AnomalyDetector:
         """
         Combines ML model + rule-based weighted scoring.
 
-        anomaly_score (0–1):
+        anomaly_score (0–1, not a calibrated probability):
           - Rule-based contributes 60% weight  (interpretable, stable)
           - ML model contributes 40% weight    (catches unusual patterns)
 
@@ -188,10 +188,9 @@ class AnomalyDetector:
 
         return {
             "anomaly":       bool(is_anomaly),      # ← unified key (was is_anomaly)
-            "anomaly_score": anomaly_score,          # ← 0–1 float
+            "anomaly_score": anomaly_score,          # ← 0–1 hybrid score, not a probability
             "reason":        reason,
             "is_anomaly":    bool(is_anomaly),       # ← kept for backward compat
-            "confidence":    round(anomaly_score, 4),
         }
 
     # ── Explain (kept for internal use) ──────────────────────────────────────

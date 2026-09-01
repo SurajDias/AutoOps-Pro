@@ -1,15 +1,21 @@
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/layout/Layout';
-import Dashboard from './pages/Dashboard/Dashboard';
-import Predictions from './pages/Predictions/Predictions';
-import Incidents from './pages/Incidents/Incidents';
-import ServiceMap from './pages/ServiceMap/ServiceMap';
-import AISimulator from './pages/AISimulator/AISimulator';
-// import Logs from './pages/Logs/Logs';
-import Login from './pages/Auth/Login';
-import Signup from './pages/Auth/Signup';
-import AIInitialization from './pages/Auth/AIInitialization';
+const LandingPage = lazy(() => import('./pages/LandingPage').then(module => ({ default: module.LandingPage })));
+const Dashboard = lazy(() => import('./pages/Dashboard/Dashboard'));
+const Predictions = lazy(() => import('./pages/Predictions/Predictions'));
+const Incidents = lazy(() => import('./pages/Incidents/Incidents'));
+const ServiceMap = lazy(() => import('./pages/ServiceMap/ServiceMap'));
+const AISimulator = lazy(() => import('./pages/AISimulator/AISimulator'));
+const Settings = lazy(() => import('./pages/Settings/Settings'));
+const Login = lazy(() => import('./pages/Auth/Login'));
+const Signup = lazy(() => import('./pages/Auth/Signup'));
+const AIInitialization = lazy(() => import('./pages/Auth/AIInitialization'));
+
+import { ToastContainer } from './components/common/ToastContainer';
+import { CommandPalette } from './components/common/CommandPalette';
+import { CursorSpotlight } from './components/common/CursorSpotlight';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isInitialized } = useAuth();
@@ -55,55 +61,57 @@ const AuthRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
 function AppRoutes() {
   return (
-    <Routes>
-      {/* Authentication */}
-      <Route
-        path="/login"
-        element={
-          <AuthRoute>
-            <Login />
-          </AuthRoute>
-        }
-      />
+    <>
+      <CursorSpotlight />
+      <ToastContainer />
+      <CommandPalette />
 
-      <Route
-        path="/signup"
-        element={
-          <AuthRoute>
-            <Signup />
-          </AuthRoute>
-        }
-      />
+      <Suspense fallback={<div className="min-h-screen grid place-items-center bg-background text-text-muted text-sm">Loading AutoOps Pro…</div>}>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
 
-      <Route path="/init" element={<InitRoute />} />
+        {/* Authentication */}
+        <Route
+          path="/login"
+          element={
+            <AuthRoute>
+              <Login />
+            </AuthRoute>
+          }
+        />
 
-      {/* Protected Routes */}
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <Layout />
-          </ProtectedRoute>
-        }
-      >
-        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route
+          path="/signup"
+          element={
+            <AuthRoute>
+              <Signup />
+            </AuthRoute>
+          }
+        />
 
-        <Route path="dashboard" element={<Dashboard />} />
-        <Route path="predictions" element={<Predictions />} />
-        <Route path="incidents" element={<Incidents />} />
-        <Route path="service-map" element={<ServiceMap />} />
-        <Route path="ai-simulator" element={<AISimulator />} />
+        <Route path="/init" element={<InitRoute />} />
 
+        {/* Protected Routes */}
+        <Route
+          element={
+            <ProtectedRoute>
+              <Layout />
+            </ProtectedRoute>
+          }
+        >
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/predictions" element={<Predictions />} />
+          <Route path="/incidents" element={<Incidents />} />
+          <Route path="/service-map" element={<ServiceMap />} />
+          <Route path="/ai-simulator" element={<AISimulator />} />
+          <Route path="/settings" element={<Settings />} />
+        </Route>
 
-
-        {/* Logs page removed because it does not exist */}
-        {/* <Route path="logs" element={<Logs />} /> */}
-
-      </Route>
-
-      {/* Fallback */}
-      <Route path="*" element={<Navigate to="/login" replace />} />
-    </Routes>
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      </Suspense>
+    </>
   );
 }
 

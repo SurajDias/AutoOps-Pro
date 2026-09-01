@@ -29,9 +29,11 @@ async def detect_anomaly(metrics: MetricInput):
 
         return result
 
-    except Exception as e:
-        logger.error(f"Detection error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Anomaly detection failed")
+        raise HTTPException(status_code=500, detail="Unable to process anomaly detection.")
 
 
 # =========================
@@ -52,11 +54,11 @@ async def train_model(request: TrainingRequest):
             **stats
         )
 
-    except Exception as e:
-        logger.error(f"Training error: {e}")
+    except Exception:
+        logger.exception("Model training failed")
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail="Unable to train the model.",
         )
 
 
@@ -67,7 +69,7 @@ async def train_model(request: TrainingRequest):
 async def get_model_status():
     return {
         "model_loaded": detector.model is not None,
-        "model_path": str(detector.model_path) if detector.model else None,
+        "model_path": detector.model_path.name if detector.model else None,
         "features": detector.features,
         "status": "ready" if detector.model else "not_trained"
     }

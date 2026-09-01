@@ -1,14 +1,19 @@
 import asyncio
+import os
 import threading
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 # Services
 from app.services.topology_service import get_topology
 from app.services.health_service import update_service_health
 from app.services.metrics_service import get_metrics_history
-from app.services.service_graph import simulate_failure
+from app.services.service_graph import (
+    UnknownServiceError,
+    analyze_dependency_impact,
+    simulate_failure,
+)
 
 # Models
 from app.models.anomaly_detector import detect_anomaly
@@ -23,6 +28,19 @@ from app.routes import system
 
 # Incident Management API
 from app.api.incident_api import router as incident_router
+from app.api.dependency_api import router as dependency_router
+
+
+DEFAULT_CORS_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
+CORS_ALLOW_CREDENTIALS = True
+
+
+def parse_cors_origins(origins_value: str, *, allow_credentials: bool = CORS_ALLOW_CREDENTIALS) -> list[str]:
+    """Parse CORS origins and reject credentialed wildcard access at startup."""
+    origins = [origin.strip() for origin in origins_value.split(",") if origin.strip()]
+    if allow_credentials and "*" in origins:
+        raise RuntimeError("CORS_ORIGINS must not include '*' when credentials are enabled.")
+    return origins
 
 
 app = FastAPI(
@@ -33,10 +51,12 @@ app = FastAPI(
 # =========================
 # CORS
 # =========================
+cors_origins = parse_cors_origins(os.getenv("CORS_ORIGINS", DEFAULT_CORS_ORIGINS))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -53,6 +73,7 @@ app.include_router(
     prefix="/incidents",
     tags=["Incident Management"]
 )
+app.include_router(dependency_router)
 
 # =========================
 # BACKGROUND METRICS THREAD
@@ -89,19 +110,6 @@ def prediction():
     }
 
 
-@app.get("/incidents")
-def incidents():
-    if metrics["memory"] > 85:
-        return {
-            "incident": "Memory leak detected",
-            "severity": "high"
-        }
-
-    return {
-        "incident": "No active incidents"
-    }
-
-
 @app.get("/simulate-cascade")
 def simulate_cascade():
     return simulate_failure()
@@ -130,6 +138,14 @@ def topology():
 @app.get("/service-health")
 def service_health():
     return update_service_health()
+
+
+@app.get("/service-dependencies/{service_id}/impact")
+def service_dependency_impact(service_id: str):
+    try:
+        return analyze_dependency_impact(service_id)
+    except UnknownServiceError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.get("/metrics/history")
