@@ -90,6 +90,8 @@ def test_incident_creation_and_listing(client, trigger_condition):
     assert incidents[0]["status"] == "Open"
     assert incidents[0]["service_name"] == "api-gateway"
     snapshot = incidents[0]["evidence_snapshot"]
+    captured_at = snapshot.pop("captured_at")
+    assert captured_at
     assert snapshot == {
         "metrics": {
             "cpu": 90,
@@ -124,6 +126,39 @@ def test_incident_detail_returns_immutable_evidence_snapshot(client, trigger_con
     snapshot = detail.json()["evidence_snapshot"]
     assert snapshot["metrics"]["cpu"] == 90
     assert snapshot["root_cause"] == ROOT_CAUSE
+
+
+def test_incident_detail_exposes_persisted_timeline_in_chronological_order(client, trigger_condition):
+    status = trigger_condition()
+    incident_id = _all_incidents(client)[0]["id"]
+
+    detail = client.get(f"/incidents/{incident_id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    timeline = body["timeline"]
+
+    assert [event["event_type"] for event in timeline] == [
+        "created", "evidence_captured", "diagnosed", "recommended",
+    ]
+    assert timeline == sorted(timeline, key=lambda event: event["timestamp"])
+    assert timeline[0]["title"] == "Incident created"
+    assert timeline[1]["timestamp"] == body["evidence_snapshot"]["captured_at"]
+    assert ROOT_CAUSE in timeline[2]["description"]
+    assert status["recommended_action"] == timeline[3]["description"]
+    assert all(event["event_type"] != "resolved" for event in timeline)
+
+
+def test_resolved_incident_timeline_uses_persisted_resolution_timestamp(client, trigger_condition):
+    trigger_condition()
+    incident_id = _all_incidents(client)[0]["id"]
+
+    assert client.put(f"/incidents/{incident_id}", json={"status": "Resolved"}).status_code == 200
+    detail = client.get(f"/incidents/{incident_id}").json()
+    resolved = detail["timeline"][-1]
+
+    assert resolved["event_type"] == "resolved"
+    assert resolved["timestamp"] == detail["resolved_at"] + "+00:00"
+    assert "Resolved" in resolved["description"]
 
 
 def test_incident_statistics(client, trigger_condition):
@@ -183,7 +218,12 @@ def test_legacy_incident_without_snapshot_remains_readable(client):
 
     detail = client.get(f"/incidents/{incident_id}")
     assert detail.status_code == 200
-    assert detail.json()["evidence_snapshot"] is None
+    body = detail.json()
+    assert body["evidence_snapshot"] is None
+    assert [event["event_type"] for event in body["timeline"]] == [
+        "created", "evidence_unavailable", "diagnosed", "recommended",
+    ]
+    assert "not captured" in body["timeline"][1]["description"]
 
 
 def test_resolved_incident_does_not_suppress_new_occurrence(client, trigger_condition):

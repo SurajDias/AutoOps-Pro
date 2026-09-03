@@ -81,3 +81,9 @@ def test_concurrent_system_status_requests_create_one_open_incident(test_engine,
     assert incidents[0].service_name == SERVICE_NAME
     assert incidents[0].evidence_snapshot["metrics"] == qualifying_metrics
     assert incidents[0].evidence_snapshot["root_cause"] == ROOT_CAUSE
+    with TestClient(app) as detail_client:
+        detail = detail_client.get(f"/incidents/{incidents[0].id}")
+    assert detail.status_code == 200
+    assert [event["event_type"] for event in detail.json()["timeline"]] == [
+        "created", "evidence_captured", "diagnosed", "recommended",
+    ]

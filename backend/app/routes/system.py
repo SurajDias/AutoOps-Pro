@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from app.utils.metrics_generator import (
@@ -121,6 +122,8 @@ def _record_incident_if_needed(
 
     root_cause = root_result.get("summary") or root_result.get("primary_issue") or "Unknown"
     dependency_service_id = _incident_dependency_service_id()
+    captured_at_datetime = datetime.now(timezone.utc)
+    captured_at = captured_at_datetime.isoformat()
     created = create_incident_record({
         "service_name": scenario.get("service", "payment"),
         "severity": severity.title(),
@@ -128,7 +131,9 @@ def _record_incident_if_needed(
         "root_cause": root_cause,
         "recommendation": decision.get("action", "Investigate incident"),
         "status": "Open",
+        "timestamp": captured_at_datetime.replace(tzinfo=None),
         "evidence_snapshot": {
+            "captured_at": captured_at,
             "metrics": {
                 key: current_value
                 for key, current_value in {

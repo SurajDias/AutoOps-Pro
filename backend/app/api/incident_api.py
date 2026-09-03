@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
@@ -11,6 +12,79 @@ from app.schemas.incident import IncidentCreate, IncidentUpdate
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _iso_timestamp(value):
+    """Serialize a persisted datetime without assigning a new time to it."""
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc).isoformat() if value.tzinfo is None else value.isoformat()
+
+
+def _timeline_for(incident: Incident) -> list[dict[str, str]]:
+    """Derive an ordered investigation timeline entirely from incident facts."""
+    created_at = _iso_timestamp(incident.timestamp)
+    snapshot = incident.evidence_snapshot or None
+    events = [
+        {
+            "timestamp": created_at,
+            "event_type": "created",
+            "title": "Incident created",
+            "description": "Incident record was created.",
+            "order": 0,
+        },
+    ]
+
+    if snapshot:
+        captured_at = snapshot.get("captured_at") or created_at
+        events.append({
+            "timestamp": captured_at,
+            "event_type": "evidence_captured",
+            "title": "Evidence captured",
+            "description": "Historical telemetry and diagnostic evidence were captured with this incident.",
+            "order": 1,
+        })
+    else:
+        events.append({
+            "timestamp": created_at,
+            "event_type": "evidence_unavailable",
+            "title": "Historical evidence unavailable",
+            "description": "Historical evidence was not captured for this legacy incident.",
+            "order": 1,
+        })
+
+    persisted_root_cause = (snapshot or {}).get("root_cause") or incident.root_cause
+    events.append({
+        "timestamp": created_at,
+        "event_type": "diagnosed",
+        "title": "Diagnosis recorded with incident",
+        "description": f"{incident.anomaly_type}. Root cause recorded: {persisted_root_cause}.",
+        "order": 2,
+    })
+    recommendation = (snapshot or {}).get("recommended_action") or incident.recommendation
+    events.append({
+        "timestamp": created_at,
+        "event_type": "recommended",
+        "title": "Recommendation recorded with incident",
+        "description": recommendation,
+        "order": 3,
+    })
+
+    # Older resolved rows may predate the persisted resolved_at field. Do not
+    # infer a resolution time for them from a current request or another field.
+    if incident.status == "Resolved" and incident.resolved_at is not None:
+        events.append({
+            "timestamp": _iso_timestamp(incident.resolved_at),
+            "event_type": "resolved",
+            "title": "Incident resolved",
+            "description": f"Incident status recorded as {incident.status}.",
+            "order": 4,
+        })
+
+    return [
+        {key: value for key, value in event.items() if key != "order"}
+        for event in sorted(events, key=lambda event: (event["timestamp"] or "", event["order"]))
+    ]
 
 
 def _database_unavailable(error: Exception) -> HTTPException:
@@ -99,7 +173,11 @@ def get_incident(incident_id: int, db: Session = Depends(get_db)):
         raise _database_unavailable(error) from error
     if incident is None:
         raise HTTPException(404, "Incident not found")
-    return incident
+    # Detail-only enrichment preserves list/history API response contracts.
+    return {
+        **{column.name: getattr(incident, column.name) for column in Incident.__table__.columns},
+        "timeline": _timeline_for(incident),
+    }
 
 
 @router.put("/{incident_id}")
@@ -108,6 +186,8 @@ def update_incident(incident_id: int, updated: IncidentUpdate, db: Session = Dep
         incident = db.query(Incident).filter(Incident.id == incident_id).first()
         if incident is None:
             raise HTTPException(404, "Incident not found")
+        if updated.status == "Resolved" and incident.status != "Resolved":
+            incident.resolved_at = datetime.now(timezone.utc).replace(tzinfo=None)
         incident.status = updated.status
         db.commit()
         db.refresh(incident)

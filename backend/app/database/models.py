@@ -22,6 +22,10 @@ class Incident(Base):
     recommendation = Column(String, nullable=False)
     status = Column(String, default="Open")
     timestamp = Column(DateTime, default=_utc_now_naive)
+    # Set only when the lifecycle endpoint records a real resolution.  Keeping
+    # this separate from ``timestamp`` lets the investigation timeline avoid
+    # inventing a resolution time for historical rows.
+    resolved_at = Column(DateTime, nullable=True)
     # Captured once by the automatic incident-creation path. Resolution only
     # changes lifecycle state, preserving the original diagnostic evidence.
     evidence_snapshot = Column(JSONB, nullable=True)
