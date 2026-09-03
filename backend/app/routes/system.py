@@ -17,6 +17,7 @@ from app.models.failure_prediction import failure_predictor
 from app.models.simulator import WhatIfSimulator
 from app.models.trend_analytics import trend_engine
 from app.database.postgres import create_incident_record, find_similar_incident
+from app.services.health_service import update_service_health
 
 router   = APIRouter()
 history  = []
@@ -101,20 +102,59 @@ def _similar_incident(primary_issue):
     return "Historical incident lookup unavailable."
 
 
-def _record_incident_if_needed(scenario, root_result, anomaly_reason, decision):
+def _incident_dependency_service_id() -> str | None:
+    """Capture a canonical failed node only when scenario health identifies one."""
+    failed_services = [
+        service_id for service_id, health in update_service_health().items()
+        if health == "failed"
+    ]
+    return failed_services[0] if len(failed_services) == 1 else None
+
+
+def _record_incident_if_needed(
+    scenario, current, root_result, anomaly_result, decision, trends, timeline, confidence,
+):
     """Create one record per active high-severity detection."""
     severity = str(root_result.get("status", "")).lower()
     if severity not in ("high", "critical"):
         return
 
     root_cause = root_result.get("summary") or root_result.get("primary_issue") or "Unknown"
+    dependency_service_id = _incident_dependency_service_id()
     created = create_incident_record({
         "service_name": scenario.get("service", "payment"),
         "severity": severity.title(),
-        "anomaly_type": anomaly_reason or "AI anomaly detected",
+        "anomaly_type": anomaly_result.get("reason") or "AI anomaly detected",
         "root_cause": root_cause,
         "recommendation": decision.get("action", "Investigate incident"),
         "status": "Open",
+        "evidence_snapshot": {
+            "metrics": {
+                key: current_value
+                for key, current_value in {
+                    "cpu": current.get("cpu"),
+                    "memory": current.get("memory"),
+                    "response_time": current.get("response_time"),
+                    "latency": current.get("latency"),
+                    "requests": current.get("requests"),
+                    "error_rate": current.get("error_rate"),
+                }.items()
+                if current_value is not None
+            },
+            "anomaly_score": anomaly_result.get("anomaly_score"),
+            "anomaly_reason": anomaly_result.get("reason"),
+            "rule_evidence": bool(anomaly_result.get("rule_evidence", False)),
+            "isolation_forest_anomaly": bool(anomaly_result.get("ml_anomaly", False)),
+            "root_cause": root_result.get("summary"),
+            "primary_issue": root_result.get("primary_issue"),
+            "root_cause_confidence": confidence,
+            "severity": root_result.get("severity"),
+            "risk": decision.get("risk"),
+            "recommended_action": decision.get("action"),
+            "trend": trends.get("risk_direction"),
+            "estimated_failure_window": timeline.get("time_to_failure"),
+            "dependency_service_id": dependency_service_id,
+        },
     })
     if not created:
         logger.error("Unable to persist automatic incident for active high-severity condition")
@@ -127,7 +167,9 @@ def _record_incident_if_needed(scenario, root_result, anomaly_reason, decision):
 @router.get("/system-status")
 def get_system_status():
 
-    current = metrics
+    # Keep one request-local telemetry snapshot for analysis and incident
+    # persistence; the collector may update the shared dictionary concurrently.
+    current = dict(metrics)
 
     # ── Detection input ───────────────────────────────────────────────────────
     detection_input = {
@@ -200,10 +242,21 @@ def get_system_status():
         "anomaly":        is_anomaly,
         "anomaly_score":  anomaly_score,
         "anomaly_reason": anomaly_reason,
+        "detection_evidence": {
+            "rule_evidence": bool(anomaly_result.get("rule_evidence", False)),
+            "isolation_forest_anomaly": bool(anomaly_result.get("ml_anomaly", False)),
+            "thresholds": anomaly_result.get("thresholds", {}),
+            "persistence": (
+                "Live rule-threshold evidence must persist for three consecutive samples."
+                if get_metrics_mode() == "live"
+                else "Demo scenario state is evaluated directly from the active synthetic metrics."
+            ),
+        },
         "root_cause":     root_result.get("summary"),
         "primary_issue":  root_result.get("primary_issue"),
         "severity":       root_result.get("severity"),
         "confidence":     confidence,
+        "root_cause_details": root_result.get("details", []),
         # ── NEW: decision engine output ───────────────────────────────────────
         "recommended_action": decision["action"],
         "risk":               decision["risk"],
@@ -211,7 +264,9 @@ def get_system_status():
         "trends":             trends,
     }
     response.update(_timeline(current, status, root_result, anomaly_result, decision, trends))
-    _record_incident_if_needed(scenario, root_result, anomaly_reason, decision)
+    _record_incident_if_needed(
+        scenario, current, root_result, anomaly_result, decision, trends, response, confidence,
+    )
     return response
 
 

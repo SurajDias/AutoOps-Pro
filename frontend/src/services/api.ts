@@ -17,8 +17,11 @@ export interface SystemStatus {
   root_cause: string; primary_issue: string; severity: 'Normal' | 'Warning' | 'Critical'; confidence: number; recommended_action: string; risk: string; reason: string;
   trends: { sample_size: number; risk_direction: 'Worsening' | 'Improving' | 'Stable'; metrics: Record<string, { trend: 'Increasing' | 'Decreasing' | 'Stable'; change: number; current: number }> };
   prediction: string; time_to_failure: string; explainability: string[]; similar_incident: string; demo_step: string;
+  detection_evidence?: { rule_evidence: boolean; isolation_forest_anomaly: boolean; thresholds: Partial<Record<'cpu' | 'memory' | 'response_time' | 'error_rate' | 'latency', number>>; persistence: string; };
+  root_cause_details?: string[];
 }
-export interface Incident { id: number; service_name: string; severity: string; anomaly_type: string; root_cause: string; recommendation: string; status: IncidentStatus; timestamp: string; }
+export interface IncidentEvidenceSnapshot { metrics?: Partial<Metrics>; anomaly_score?: number; anomaly_reason?: string; rule_evidence?: boolean; isolation_forest_anomaly?: boolean; root_cause?: string; primary_issue?: string; root_cause_confidence?: number; severity?: string; risk?: string; recommended_action?: string; trend?: string; estimated_failure_window?: string; dependency_service_id?: string | null; }
+export interface Incident { id: number; service_name: string; severity: string; anomaly_type: string; root_cause: string; recommendation: string; status: IncidentStatus; timestamp: string; evidence_snapshot?: IncidentEvidenceSnapshot | null; }
 export interface IncidentStatistics { total_incidents: number; open_incidents: number; resolved_incidents: number; high_severity_incidents: number; }
 export interface IncidentPatterns { most_common_root_cause: string | null; most_affected_service: string | null; recurring_incidents: number; }
 export interface Topology { nodes: Array<{ id: string; label: string }>; edges: Array<{ source: string; target: string }>; }

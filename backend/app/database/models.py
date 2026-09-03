@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.database.postgres import Base
 
@@ -21,3 +22,6 @@ class Incident(Base):
     recommendation = Column(String, nullable=False)
     status = Column(String, default="Open")
     timestamp = Column(DateTime, default=_utc_now_naive)
+    # Captured once by the automatic incident-creation path. Resolution only
+    # changes lifecycle state, preserving the original diagnostic evidence.
+    evidence_snapshot = Column(JSONB, nullable=True)

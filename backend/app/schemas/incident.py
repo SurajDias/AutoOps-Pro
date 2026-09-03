@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -16,6 +16,7 @@ class IncidentCreate(BaseModel):
     root_cause: str
     recommendation: str
     status: IncidentStatus = "Open"
+    evidence_snapshot: dict[str, Any] | None = None
 
 
 class IncidentResponse(IncidentCreate):

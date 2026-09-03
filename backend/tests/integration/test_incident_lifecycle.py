@@ -83,12 +83,47 @@ def _statistics(client):
 
 
 def test_incident_creation_and_listing(client, trigger_condition):
-    trigger_condition()
+    status = trigger_condition()
 
     incidents = _all_incidents(client)
     assert len(incidents) == 1
     assert incidents[0]["status"] == "Open"
     assert incidents[0]["service_name"] == "api-gateway"
+    snapshot = incidents[0]["evidence_snapshot"]
+    assert snapshot == {
+        "metrics": {
+            "cpu": 90,
+            "memory": 91,
+            "response_time": 400,
+            "latency": 400,
+            "requests": 720,
+            "error_rate": 6,
+        },
+        "anomaly_score": status["anomaly_score"],
+        "anomaly_reason": status["anomaly_reason"],
+        "rule_evidence": True,
+        "isolation_forest_anomaly": status["detection_evidence"]["isolation_forest_anomaly"],
+        "root_cause": ROOT_CAUSE,
+        "primary_issue": "High CPU",
+        "root_cause_confidence": status["confidence"],
+        "severity": "Critical",
+        "risk": status["risk"],
+        "recommended_action": status["recommended_action"],
+        "trend": status["trends"]["risk_direction"],
+        "estimated_failure_window": status["time_to_failure"],
+        "dependency_service_id": None,
+    }
+
+
+def test_incident_detail_returns_immutable_evidence_snapshot(client, trigger_condition):
+    trigger_condition()
+    incident_id = _all_incidents(client)[0]["id"]
+
+    detail = client.get(f"/incidents/{incident_id}")
+    assert detail.status_code == 200
+    snapshot = detail.json()["evidence_snapshot"]
+    assert snapshot["metrics"]["cpu"] == 90
+    assert snapshot["root_cause"] == ROOT_CAUSE
 
 
 def test_incident_statistics(client, trigger_condition):
@@ -116,7 +151,8 @@ def test_sequential_deduplication_ignores_metric_bearing_anomaly_type(client, tr
 
 def test_resolve_incident_updates_listing_and_statistics(client, trigger_condition):
     trigger_condition()
-    incident_id = _all_incidents(client)[0]["id"]
+    original = _all_incidents(client)[0]
+    incident_id = original["id"]
 
     response = client.put(f"/incidents/{incident_id}", json={"status": "Resolved"})
     assert response.status_code == 200
@@ -124,12 +160,30 @@ def test_resolve_incident_updates_listing_and_statistics(client, trigger_conditi
 
     incidents = _all_incidents(client)
     assert incidents[0]["status"] == "Resolved"
+    assert incidents[0]["evidence_snapshot"] == original["evidence_snapshot"]
     assert _statistics(client) == {
         "total_incidents": 1,
         "open_incidents": 0,
         "resolved_incidents": 1,
         "high_severity_incidents": 1,
     }
+
+
+def test_legacy_incident_without_snapshot_remains_readable(client):
+    response = client.post("/incidents/", json={
+        "service_name": "payment",
+        "severity": "Warning",
+        "anomaly_type": "Legacy record",
+        "root_cause": "Legacy cause",
+        "recommendation": "Monitor",
+        "status": "Open",
+    })
+    assert response.status_code == 200
+    incident_id = response.json()["incident_id"]
+
+    detail = client.get(f"/incidents/{incident_id}")
+    assert detail.status_code == 200
+    assert detail.json()["evidence_snapshot"] is None
 
 
 def test_resolved_incident_does_not_suppress_new_occurrence(client, trigger_condition):

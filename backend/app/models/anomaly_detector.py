@@ -195,6 +195,12 @@ class AnomalyDetector:
             # debounced without treating an Isolation Forest trained on demo
             # service metrics as a direct host-alert source.
             "rule_score":    rule_score,
+            # These are observability fields for the existing calculation. They
+            # let API consumers explain a result without reimplementing the
+            # detector or treating the hybrid score as a probability.
+            "rule_evidence": bool(rule_anomaly),
+            "ml_anomaly":    bool(ml_anomaly),
+            "thresholds":    dict(self.thresholds),
         }
 
     # ── Explain (kept for internal use) ──────────────────────────────────────

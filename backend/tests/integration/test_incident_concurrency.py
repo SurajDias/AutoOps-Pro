@@ -79,3 +79,5 @@ def test_concurrent_system_status_requests_create_one_open_incident(test_engine,
     incidents = _matching_open_incidents(test_engine)
     assert len(incidents) == 1
     assert incidents[0].service_name == SERVICE_NAME
+    assert incidents[0].evidence_snapshot["metrics"] == qualifying_metrics
+    assert incidents[0].evidence_snapshot["root_cause"] == ROOT_CAUSE
