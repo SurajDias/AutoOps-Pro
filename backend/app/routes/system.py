@@ -96,6 +96,63 @@ def _timeline(current, status, root_result, anomaly_result, decision, trends):
     }
 
 
+def _recommendation_explanation(current, root_result, decision):
+    """Describe the decision engine's existing inputs and ranking output."""
+    primary_issue = root_result.get("primary_issue", "None")
+    metric_values = {
+        "cpu": float(current.get("cpu", current.get("cpu_usage", 50))),
+        "memory": float(current.get("memory", 60)),
+        "latency": float(current.get("latency", current.get("response_time", 100))),
+        "error_rate": float(current.get("error_rate", 1)),
+    }
+
+    def evidence_for(action):
+        evidence = []
+        if action == "scale_cpu" and metric_values["cpu"] > 60:
+            evidence.append(f"CPU is {metric_values['cpu']}%, above the decision engine's 60% operating threshold.")
+        if action == "optimize_memory" and metric_values["memory"] > 75:
+            evidence.append(f"Memory is {metric_values['memory']}%, above the decision engine's 75% operating threshold.")
+        if action == "reduce_latency" and metric_values["latency"] > 150:
+            evidence.append(f"Latency is {metric_values['latency']}ms, above the decision engine's 150ms operating threshold.")
+        if action == "restart_service" and metric_values["error_rate"] > 1:
+            evidence.append(f"Error rate is {metric_values['error_rate']}%, above the decision engine's 1% operating threshold.")
+        if action == "throttle_requests" and metric_values["cpu"] > 70 and metric_values["latency"] > 200:
+            evidence.append(
+                f"CPU is {metric_values['cpu']}% and latency is {metric_values['latency']}ms, meeting the combined-load condition."
+            )
+
+        issue = str(primary_issue).lower()
+        issue_matches = {
+            "scale_cpu": ("cpu",),
+            "optimize_memory": ("memory",),
+            "reduce_latency": ("latency", "slow", "response"),
+            "restart_service": ("error",),
+        }
+        if any(term in issue for term in issue_matches.get(action, ())):
+            evidence.append(f"Primary issue recorded by root-cause analysis: {primary_issue}.")
+        return evidence
+
+    candidates = []
+    for rank, candidate in enumerate(decision.get("candidates", []), start=1):
+        candidates.append({
+            **candidate,
+            "rank": rank,
+            "evidence": evidence_for(candidate["action"]),
+        })
+
+    selection_factors = [
+        f"Primary issue recorded by root-cause analysis: {primary_issue}.",
+        f"CPU {metric_values['cpu']}%, memory {metric_values['memory']}%, latency {metric_values['latency']}ms, and error rate {metric_values['error_rate']}% were evaluated by the decision engine.",
+    ]
+    return {
+        "recommended_action": decision["action"],
+        "reason": decision["reason"],
+        "action_score": decision.get("action_score"),
+        "candidates": candidates,
+        "selection_factors": selection_factors,
+    }
+
+
 def _similar_incident(primary_issue):
     database_match = find_similar_incident(primary_issue)
     if database_match is not None:
@@ -156,6 +213,7 @@ def _record_incident_if_needed(
             "severity": root_result.get("severity"),
             "risk": decision.get("risk"),
             "recommended_action": decision.get("action"),
+            "recommendation_explanation": _recommendation_explanation(current, root_result, decision),
             "trend": trends.get("risk_direction"),
             "estimated_failure_window": timeline.get("time_to_failure"),
             "dependency_service_id": dependency_service_id,
@@ -235,6 +293,7 @@ def get_system_status():
 
     # ── Decision engine: recommend best action ────────────────────────────────
     decision = _sim._select_best_action(current, root_result, anomaly=is_anomaly)
+    recommendation_explanation = _recommendation_explanation(current, root_result, decision)
 
     severity = str(root_result.get("severity", "Normal")).lower()
     status = "critical" if severity == "critical" else "warning" if severity == "warning" else "normal"
@@ -266,6 +325,7 @@ def get_system_status():
         "recommended_action": decision["action"],
         "risk":               decision["risk"],
         "reason":             decision["reason"],
+        "recommendation_explanation": recommendation_explanation,
         "trends":             trends,
     }
     response.update(_timeline(current, status, root_result, anomaly_result, decision, trends))

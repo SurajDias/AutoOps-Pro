@@ -336,6 +336,18 @@ class WhatIfSimulator:
 
         return {
             "action":     best_action,
+            # These are the existing ranking signals calculated above. They
+            # are returned for observability only; no selection semantics are
+            # changed by exposing them.
+            "action_score": best_score,
+            "candidates": [
+                {
+                    "action": action,
+                    "label": self.ACTION_REGISTRY.get(action, {}).get("label", action),
+                    "score": score,
+                }
+                for action, score in sorted(scores.items(), key=lambda item: -item[1])
+            ],
             "confidence": confidence,
             "risk":       risk,
             "reason":     reason,

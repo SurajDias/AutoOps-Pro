@@ -18,12 +18,14 @@ export interface SystemStatus {
   trends: { sample_size: number; risk_direction: 'Worsening' | 'Improving' | 'Stable'; metrics: Record<string, { trend: 'Increasing' | 'Decreasing' | 'Stable'; change: number; current: number }> };
   prediction: string; time_to_failure: string; explainability: string[]; similar_incident: string; demo_step: string;
   detection_evidence?: { rule_evidence: boolean; isolation_forest_anomaly: boolean; thresholds: Partial<Record<'cpu' | 'memory' | 'response_time' | 'error_rate' | 'latency', number>>; persistence: string; };
-  root_cause_details?: string[];
+  root_cause_details?: string[]; recommendation_explanation?: RecommendationExplanation;
 }
-export interface IncidentEvidenceSnapshot { captured_at?: string; metrics?: Partial<Metrics>; anomaly_score?: number; anomaly_reason?: string; rule_evidence?: boolean; isolation_forest_anomaly?: boolean; root_cause?: string; primary_issue?: string; root_cause_confidence?: number; severity?: string; risk?: string; recommended_action?: string; trend?: string; estimated_failure_window?: string; dependency_service_id?: string | null; }
+export interface RecommendationCandidate { action: string; label: string; score: number; rank: number; evidence: string[]; }
+export interface RecommendationExplanation { recommended_action: string; reason: string; action_score?: number; candidates: RecommendationCandidate[]; selection_factors: string[]; }
+export interface IncidentEvidenceSnapshot { captured_at?: string; metrics?: Partial<Metrics>; anomaly_score?: number; anomaly_reason?: string; rule_evidence?: boolean; isolation_forest_anomaly?: boolean; root_cause?: string; primary_issue?: string; root_cause_confidence?: number; severity?: string; risk?: string; recommended_action?: string; recommendation_explanation?: RecommendationExplanation; trend?: string; estimated_failure_window?: string; dependency_service_id?: string | null; }
 export interface IncidentTimelineEvent { timestamp: string; event_type: 'created' | 'evidence_captured' | 'evidence_unavailable' | 'diagnosed' | 'recommended' | 'resolved'; title: string; description: string; }
 export interface Incident { id: number; service_name: string; severity: string; anomaly_type: string; root_cause: string; recommendation: string; status: IncidentStatus; timestamp: string; resolved_at?: string | null; evidence_snapshot?: IncidentEvidenceSnapshot | null; }
-export interface IncidentDetail extends Incident { timeline: IncidentTimelineEvent[]; }
+export interface IncidentDetail extends Incident { timeline: IncidentTimelineEvent[]; recommendation_explanation?: RecommendationExplanation | null; }
 export interface IncidentStatistics { total_incidents: number; open_incidents: number; resolved_incidents: number; high_severity_incidents: number; }
 export interface IncidentPatterns { most_common_root_cause: string | null; most_affected_service: string | null; recurring_incidents: number; }
 export interface Topology { nodes: Array<{ id: string; label: string }>; edges: Array<{ source: string; target: string }>; }

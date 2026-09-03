@@ -87,6 +87,12 @@ def _timeline_for(incident: Incident) -> list[dict[str, str]]:
     ]
 
 
+def _recorded_recommendation_explanation(incident: Incident):
+    """Return only reasoning captured with the historical incident, if any."""
+    snapshot = incident.evidence_snapshot or {}
+    return snapshot.get("recommendation_explanation")
+
+
 def _database_unavailable(error: Exception) -> HTTPException:
     """Keep infrastructure details in server logs while returning a safe API error."""
     logger.exception("Incident database operation failed: %s", error)
@@ -177,6 +183,7 @@ def get_incident(incident_id: int, db: Session = Depends(get_db)):
     return {
         **{column.name: getattr(incident, column.name) for column in Incident.__table__.columns},
         "timeline": _timeline_for(incident),
+        "recommendation_explanation": _recorded_recommendation_explanation(incident),
     }
 
 

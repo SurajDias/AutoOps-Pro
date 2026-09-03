@@ -92,6 +92,8 @@ def test_incident_creation_and_listing(client, trigger_condition):
     snapshot = incidents[0]["evidence_snapshot"]
     captured_at = snapshot.pop("captured_at")
     assert captured_at
+    explanation = snapshot.pop("recommendation_explanation")
+    assert explanation["recommended_action"] == status["recommended_action"]
     assert snapshot == {
         "metrics": {
             "cpu": 90,
@@ -126,6 +128,29 @@ def test_incident_detail_returns_immutable_evidence_snapshot(client, trigger_con
     snapshot = detail.json()["evidence_snapshot"]
     assert snapshot["metrics"]["cpu"] == 90
     assert snapshot["root_cause"] == ROOT_CAUSE
+    assert detail.json()["recommendation_explanation"] == snapshot["recommendation_explanation"]
+
+    # The current analysis can move on, but the incident detail must retain
+    # the recommendation reasoning captured with this historical record.
+    trigger_condition(cpu=94, response_time=470)
+    historical_detail = client.get(f"/incidents/{incident_id}").json()
+    assert historical_detail["recommendation_explanation"] == snapshot["recommendation_explanation"]
+    assert "CPU is 90.0%" in str(historical_detail["recommendation_explanation"])
+
+
+def test_legacy_incident_has_no_fabricated_recommendation_reasoning(client):
+    response = client.post("/incidents/", json={
+        "service_name": "payment",
+        "severity": "Warning",
+        "anomaly_type": "Legacy record",
+        "root_cause": "Legacy cause",
+        "recommendation": "Monitor",
+        "status": "Open",
+    })
+
+    detail = client.get(f"/incidents/{response.json()['incident_id']}")
+    assert detail.status_code == 200
+    assert detail.json()["recommendation_explanation"] is None
 
 
 def test_incident_detail_exposes_persisted_timeline_in_chronological_order(client, trigger_condition):
