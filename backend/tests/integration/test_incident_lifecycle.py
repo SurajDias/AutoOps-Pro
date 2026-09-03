@@ -153,6 +153,56 @@ def test_legacy_incident_has_no_fabricated_recommendation_reasoning(client):
     assert detail.json()["recommendation_explanation"] is None
 
 
+def test_accept_feedback_is_persisted_with_the_recorded_recommendation(client, trigger_condition):
+    status = trigger_condition()
+    incident_id = _all_incidents(client)[0]["id"]
+
+    response = client.post(f"/incidents/{incident_id}/feedback", json={
+        "status": "accepted",
+        "reason": "The recommendation matches the observed CPU bottleneck.",
+    })
+    assert response.status_code == 200
+    feedback = response.json()["operator_feedback"]
+    assert feedback["status"] == "accepted"
+    assert feedback["reason"] == "The recommendation matches the observed CPU bottleneck."
+    assert feedback["action"] == status["recommended_action"]
+    assert feedback["created_at"]
+
+    detail = client.get(f"/incidents/{incident_id}").json()
+    assert detail["operator_feedback"] == feedback
+    event = next(event for event in detail["timeline"] if event["event_type"] == "recommendation_accepted")
+    assert event["timestamp"] == feedback["created_at"]
+    assert "Operator accepted" in event["description"]
+    assert "executed" not in event["description"]
+
+
+def test_reject_feedback_allows_no_reason_and_survives_resolution(client, trigger_condition):
+    trigger_condition()
+    incident_id = _all_incidents(client)[0]["id"]
+
+    response = client.post(f"/incidents/{incident_id}/feedback", json={"status": "rejected"})
+    assert response.status_code == 200
+    feedback = response.json()["operator_feedback"]
+    assert feedback["status"] == "rejected"
+    assert feedback["reason"] is None
+
+    assert client.put(f"/incidents/{incident_id}", json={"status": "Resolved"}).status_code == 200
+    detail = client.get(f"/incidents/{incident_id}").json()
+    assert detail["operator_feedback"] == feedback
+    assert any(event["event_type"] == "recommendation_rejected" for event in detail["timeline"])
+
+
+def test_feedback_validates_status_reason_length_missing_incident_and_duplicate_submission(client, trigger_condition):
+    trigger_condition()
+    incident_id = _all_incidents(client)[0]["id"]
+
+    assert client.post(f"/incidents/{incident_id}/feedback", json={"status": "deferred"}).status_code == 422
+    assert client.post(f"/incidents/{incident_id}/feedback", json={"status": "accepted", "reason": "x" * 1001}).status_code == 422
+    assert client.post("/incidents/999999/feedback", json={"status": "accepted"}).status_code == 404
+    assert client.post(f"/incidents/{incident_id}/feedback", json={"status": "accepted"}).status_code == 200
+    assert client.post(f"/incidents/{incident_id}/feedback", json={"status": "rejected"}).status_code == 409
+
+
 def test_incident_detail_exposes_persisted_timeline_in_chronological_order(client, trigger_condition):
     status = trigger_condition()
     incident_id = _all_incidents(client)[0]["id"]

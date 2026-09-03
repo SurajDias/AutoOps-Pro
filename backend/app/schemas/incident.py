@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # These are the only lifecycle states implemented by the incident API and UI.
@@ -27,3 +27,8 @@ class IncidentResponse(IncidentCreate):
 
 class IncidentUpdate(BaseModel):
     status: IncidentStatus
+
+
+class IncidentFeedbackCreate(BaseModel):
+    status: Literal["accepted", "rejected"]
+    reason: str | None = Field(default=None, max_length=1000)

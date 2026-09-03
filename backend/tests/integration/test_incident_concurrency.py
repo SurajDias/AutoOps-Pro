@@ -87,3 +87,28 @@ def test_concurrent_system_status_requests_create_one_open_incident(test_engine,
     assert [event["event_type"] for event in detail.json()["timeline"]] == [
         "created", "evidence_captured", "diagnosed", "recommended",
     ]
+
+
+def test_concurrent_feedback_records_one_deterministic_operator_response(test_engine, monkeypatch):
+    monkeypatch.setattr(system, "metrics", {
+        "cpu": 90, "memory": 91, "response_time": 400, "requests": 720,
+        "error_rate": 6, "latency": 400,
+    })
+    monkeypatch.setattr(system, "get_recent_metrics", lambda limit=12: [])
+    monkeypatch.setattr(system, "get_scenario", lambda: {"name": "test-critical", "service": SERVICE_NAME})
+    system.get_system_status()
+    incident_id = _matching_open_incidents(test_engine)[0].id
+    barrier = Barrier(2)
+
+    def submit(status):
+        barrier.wait(timeout=10)
+        with TestClient(app) as client:
+            return client.post(f"/incidents/{incident_id}/feedback", json={"status": status})
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(submit, ("accepted", "rejected")))
+
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    with TestClient(app) as client:
+        detail = client.get(f"/incidents/{incident_id}").json()
+    assert detail["operator_feedback"]["status"] in {"accepted", "rejected"}

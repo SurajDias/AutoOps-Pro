@@ -26,6 +26,12 @@ class Incident(Base):
     # this separate from ``timestamp`` lets the investigation timeline avoid
     # inventing a resolution time for historical rows.
     resolved_at = Column(DateTime, nullable=True)
+    # One auditable operator response to the recommendation currently recorded
+    # on this incident. This records review only, never action execution.
+    feedback_status = Column(String, nullable=True)
+    feedback_reason = Column(String(1000), nullable=True)
+    feedback_created_at = Column(DateTime, nullable=True)
+    feedback_action = Column(String, nullable=True)
     # Captured once by the automatic incident-creation path. Resolution only
     # changes lifecycle state, preserving the original diagnostic evidence.
     evidence_snapshot = Column(JSONB, nullable=True)

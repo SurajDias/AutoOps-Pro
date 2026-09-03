@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.database.models import Incident
 from app.database.postgres import get_db
-from app.schemas.incident import IncidentCreate, IncidentUpdate
+from app.schemas.incident import IncidentCreate, IncidentFeedbackCreate, IncidentUpdate
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -70,6 +70,20 @@ def _timeline_for(incident: Incident) -> list[dict[str, str]]:
         "order": 3,
     })
 
+    feedback = _operator_feedback_for(incident)
+    if feedback is not None and feedback["created_at"] is not None:
+        decision = "accepted" if feedback["status"] == "accepted" else "rejected"
+        description = f"Operator {decision} the recommendation '{feedback['action']}'."
+        if feedback["reason"]:
+            description += f" Reason: {feedback['reason']}"
+        events.append({
+            "timestamp": feedback["created_at"],
+            "event_type": f"recommendation_{decision}",
+            "title": f"Recommendation {decision}",
+            "description": description,
+            "order": 4,
+        })
+
     # Older resolved rows may predate the persisted resolved_at field. Do not
     # infer a resolution time for them from a current request or another field.
     if incident.status == "Resolved" and incident.resolved_at is not None:
@@ -78,7 +92,7 @@ def _timeline_for(incident: Incident) -> list[dict[str, str]]:
             "event_type": "resolved",
             "title": "Incident resolved",
             "description": f"Incident status recorded as {incident.status}.",
-            "order": 4,
+            "order": 5,
         })
 
     return [
@@ -91,6 +105,18 @@ def _recorded_recommendation_explanation(incident: Incident):
     """Return only reasoning captured with the historical incident, if any."""
     snapshot = incident.evidence_snapshot or {}
     return snapshot.get("recommendation_explanation")
+
+
+def _operator_feedback_for(incident: Incident):
+    """Serialize feedback that was explicitly persisted by an operator."""
+    if incident.feedback_status is None:
+        return None
+    return {
+        "status": incident.feedback_status,
+        "reason": incident.feedback_reason,
+        "created_at": _iso_timestamp(incident.feedback_created_at),
+        "action": incident.feedback_action,
+    }
 
 
 def _database_unavailable(error: Exception) -> HTTPException:
@@ -171,6 +197,35 @@ def search_incidents(service_name: str | None = None, root_cause: str | None = N
         raise _database_unavailable(error) from error
 
 
+@router.post("/{incident_id}/feedback")
+def record_operator_feedback(incident_id: int, feedback: IncidentFeedbackCreate, db: Session = Depends(get_db)):
+    """Persist one operator acceptance/rejection; this does not execute an action."""
+    try:
+        incident = db.query(Incident).filter(Incident.id == incident_id).with_for_update().first()
+        if incident is None:
+            raise HTTPException(404, "Incident not found")
+        if incident.feedback_status is not None:
+            raise HTTPException(409, "Operator feedback has already been recorded for this incident")
+
+        snapshot = incident.evidence_snapshot or {}
+        incident.feedback_status = feedback.status
+        incident.feedback_reason = feedback.reason
+        incident.feedback_created_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        incident.feedback_action = snapshot.get("recommended_action") or incident.recommendation
+        db.commit()
+        db.refresh(incident)
+        return {
+            "message": "Operator feedback recorded. This does not execute the recommendation.",
+            "operator_feedback": _operator_feedback_for(incident),
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise _database_unavailable(error) from error
+
+
 @router.get("/{incident_id}")
 def get_incident(incident_id: int, db: Session = Depends(get_db)):
     try:
@@ -184,6 +239,7 @@ def get_incident(incident_id: int, db: Session = Depends(get_db)):
         **{column.name: getattr(incident, column.name) for column in Incident.__table__.columns},
         "timeline": _timeline_for(incident),
         "recommendation_explanation": _recorded_recommendation_explanation(incident),
+        "operator_feedback": _operator_feedback_for(incident),
     }
 
 
