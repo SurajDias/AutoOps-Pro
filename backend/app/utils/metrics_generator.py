@@ -28,6 +28,11 @@ _metrics_history = deque(maxlen=30)
 _metrics_mode = "demo"
 _last_network_io = None
 _last_disk_io = None
+_live_sample_id = 0
+_last_live_signal_sample_id = -1
+_live_anomalous_samples = 0
+_live_normal_samples = 0
+_live_signal_confirmed = False
 _scenario = {
     "name": "normal",
     "label": "Normal operations",
@@ -122,7 +127,8 @@ def set_metrics_mode(mode):
     Live collection is optional: if psutil is missing, retain demo mode instead
     of allowing an unavailable dependency to affect backend startup or requests.
     """
-    global _metrics_mode, _last_network_io, _last_disk_io
+    global _metrics_mode, _last_network_io, _last_disk_io, _last_live_signal_sample_id
+    global _live_anomalous_samples, _live_normal_samples, _live_signal_confirmed
 
     if mode not in ("demo", "live"):
         return None
@@ -133,6 +139,10 @@ def set_metrics_mode(mode):
             return _metrics_mode
 
         _metrics_mode = mode
+        _last_live_signal_sample_id = -1
+        _live_anomalous_samples = 0
+        _live_normal_samples = 0
+        _live_signal_confirmed = False
         if mode == "live":
             # Establish I/O baselines without adding another polling loop.
             _last_network_io = None
@@ -162,7 +172,10 @@ def generate_metrics():
         metrics["memory"] = fluctuate(metrics["memory"], 30, 96, step=2)
         metrics["response_time"] = fluctuate(metrics["response_time"], 80, 900, step=8)
         metrics["requests"] = fluctuate(metrics["requests"], 100, 800, step=20)
-        metrics["error_rate"] = fluctuate(metrics["error_rate"], 0, 8, step=1)
+        # Normal and recovered demo states must not manufacture a warning from
+        # one unit of decorative noise around their 1% baseline.
+        error_ceiling = 1 if scenario["name"] in ("normal", "fixed") else 8
+        metrics["error_rate"] = fluctuate(metrics["error_rate"], 0, error_ceiling, step=1)
         metrics["latency"] = fluctuate(metrics["latency"], 50, 600, step=8)
         snapshot = dict(metrics)
         _metrics_history.append({
@@ -189,7 +202,7 @@ def generate_live_metrics():
     trustworthy host-level equivalent of application errors, therefore
     ``error_rate`` remains zero rather than fabricating failures.
     """
-    global _last_network_io, _last_disk_io
+    global _last_network_io, _last_disk_io, _live_sample_id
 
     if psutil is None:
         raise RuntimeError("psutil is unavailable")
@@ -237,6 +250,7 @@ def generate_live_metrics():
     }
     with _lock:
         metrics.update(snapshot)
+        _live_sample_id += 1
         _metrics_history.append({
             "timestamp": datetime.now().strftime("%H:%M:%S"),
             "cpu": cpu,
@@ -250,6 +264,34 @@ def generate_live_metrics():
         "scenario": "live",
         **snapshot,
     }
+
+
+def stabilize_live_signal(has_rule_evidence: bool) -> bool:
+    """Require sustained rule-threshold evidence before changing live state.
+
+    Live host readings are not the same distribution as the synthetic service
+    data used to train Isolation Forest. The hybrid score is retained intact,
+    but ML-only host outliers cannot independently create an alert. This is
+    evaluated at most once for each collector sample, not per UI request.
+    """
+    global _last_live_signal_sample_id, _live_anomalous_samples
+    global _live_normal_samples, _live_signal_confirmed
+
+    with _lock:
+        if _last_live_signal_sample_id == _live_sample_id:
+            return _live_signal_confirmed
+        _last_live_signal_sample_id = _live_sample_id
+        if has_rule_evidence:
+            _live_anomalous_samples += 1
+            _live_normal_samples = 0
+            if _live_anomalous_samples >= 3:
+                _live_signal_confirmed = True
+        else:
+            _live_normal_samples += 1
+            _live_anomalous_samples = 0
+            if _live_normal_samples >= 2:
+                _live_signal_confirmed = False
+        return _live_signal_confirmed
 
 
 def save_metrics_to_csv(data):

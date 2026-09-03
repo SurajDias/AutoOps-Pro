@@ -9,6 +9,7 @@ from app.utils.metrics_generator import (
     metrics,
     set_metrics_mode,
     set_scenario,
+    stabilize_live_signal,
 )
 from app.models.anomaly_detector import detect_anomaly
 from app.models.root_cause import analyze_root_cause
@@ -147,6 +148,17 @@ def get_system_status():
     anomaly_score  = round(anomaly_result.get("anomaly_score", 0.0), 4)
     anomaly_reason = anomaly_result.get("reason", "N/A")
 
+    # The synthetic-service Isolation Forest is still evaluated and its hybrid
+    # score remains unchanged. In live mode, only sustained rule evidence may
+    # transition presentation state: host-specific ML outliers alone are not a
+    # reliable operational incident signal.
+    if get_metrics_mode() == "live":
+        rule_evidence = anomaly_result.get("rule_score", 0) >= 0.5
+        if not stabilize_live_signal(rule_evidence):
+            is_anomaly = False
+            anomaly_reason = "Live telemetry is awaiting sustained rule-threshold evidence."
+            root_result = analyze_root_cause({})
+
     trends = trend_engine.analyze(get_recent_metrics(limit=12))
 
     # An ML-only anomaly still receives an explicit, non-normal diagnosis.
@@ -159,6 +171,19 @@ def get_system_status():
             "confidence": 60,
         })
 
+    scenario = get_scenario()
+    # ``fixed`` is a deterministic recovery scenario. Once its actual rule
+    # metrics have returned to Normal, an Isolation Forest-only outlier must
+    # not keep the presentation in Warning. Genuine threshold evidence is
+    # preserved because this only applies to the synthetic ML-only diagnosis.
+    if (
+        scenario.get("name") in ("normal", "fixed")
+        and root_result.get("primary_issue") == "Anomalous Pattern"
+    ):
+        is_anomaly = False
+        anomaly_reason = "Synthetic baseline metrics are within normal rule thresholds."
+        root_result = analyze_root_cause(detection_input)
+
     confidence = _adjust_confidence(root_result.get("confidence", 0), trends)
 
     # ── Decision engine: recommend best action ────────────────────────────────
@@ -167,7 +192,6 @@ def get_system_status():
     severity = str(root_result.get("severity", "Normal")).lower()
     status = "critical" if severity == "critical" else "warning" if severity == "warning" else "normal"
 
-    scenario = get_scenario()
     response = {
         # ── Existing fields (unchanged) ───────────────────────────────────────
         "service":        scenario.get("service", "payment"),

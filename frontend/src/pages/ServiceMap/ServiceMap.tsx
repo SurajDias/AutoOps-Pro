@@ -1,250 +1,68 @@
-import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
-import { Server, Database, Activity, Cpu, Play } from 'lucide-react';
-import { api } from '../../services/api';
+import { useEffect, useMemo, useState } from 'react';
+import { Activity, Play, X } from 'lucide-react';
+import { api, type DependencyImpact, type ServiceHealth, type Topology } from '../../services/api';
 
-interface TopologyNode { id: string; label: string; name?: string; }
-interface TopologyEdge { source: string; target: string; }
-interface ServiceNode extends TopologyNode {
-  x: number;
-  y: number;
-  status: string;
-  type: string;
-}
+interface ServiceNode { id: string; label: string; x: number; y: number; status: ServiceHealth[string]; }
+const positions: Record<string, [number, number]> = { gateway: [100, 300], auth: [330, 145], order: [330, 430], payment: [570, 345], inventory: [570, 500], db: [830, 300] };
+const statusClasses: Record<string, string> = { healthy: 'border-primary/30 bg-primary/10 text-primary', degraded: 'border-accent/30 bg-accent/10 text-accent', failed: 'border-white/25 bg-white/10 text-white' };
+const nodeColor = (status: string) => status === 'failed' ? '#f7fafc' : status === 'degraded' ? '#63d6ff' : '#4f8bff';
 
 export default function ServiceMap() {
   const [nodes, setNodes] = useState<ServiceNode[]>([]);
-  const [edges, setEdges] = useState<TopologyEdge[]>([]);
-  const [selectedNode, setSelectedNode] = useState<ServiceNode | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [health, setHealth] = useState<ServiceHealth>({});
+  const [edges, setEdges] = useState<Topology['edges']>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [impact, setImpact] = useState<DependencyImpact | null>(null);
+  const [topologyError, setTopologyError] = useState<string | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [impactError, setImpactError] = useState<string | null>(null);
+  const [loadingImpact, setLoadingImpact] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const [cascade, setCascade] = useState<{ failed_service: string; cascade_services: string[]; status: Record<string, string> } | null>(null);
-  const [cascadeError, setCascadeError] = useState<string | null>(null);
-  const [simulating, setSimulating] = useState(false);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setSelectedNode(null); };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    Promise.all([api.getTopology(controller.signal), api.getServiceHealth(controller.signal)])
-      .then(([topology, health]) => {
-        if (topology?.nodes && topology?.edges) {
-          setError(null);
-          const positions: Record<string, [number, number]> = {
-            gateway: [150, 200], auth: [360, 100], order: [360, 235],
-            payment: [590, 170], inventory: [590, 300], db: [730, 235],
-          };
-          setNodes((topology.nodes as TopologyNode[]).map((node, index) => ({
-            ...node,
-            x: positions[node.id]?.[0] ?? 120 + index * 110,
-            y: positions[node.id]?.[1] ?? 200,
-            status: (health as Record<string, string>)?.[node.id] === 'failed' ? 'critical' : (health as Record<string, string>)?.[node.id] || 'healthy',
-            type: node.id === 'db' ? 'database' : node.id === 'gateway' ? 'gateway' : 'service',
-          })));
-          setEdges(topology.edges);
-          setLastRefresh(new Date());
-        } else throw new Error('Topology response was incomplete');
-      })
-      .catch((requestError) => { if (!(requestError instanceof DOMException && requestError.name === 'AbortError')) setError(requestError instanceof Error ? requestError.message : 'Topology request failed'); });
+    void api.getTopology(controller.signal).then((topology) => {
+      setEdges(topology.edges);
+      setNodes(topology.nodes.map((node, index) => ({ ...node, x: positions[node.id]?.[0] ?? 120 + index * 120, y: positions[node.id]?.[1] ?? 300, status: 'healthy' })));
+      setTopologyError(null); setLastRefresh(new Date());
+    }).catch((error: unknown) => { if (!(error instanceof DOMException && error.name === 'AbortError')) setTopologyError(error instanceof Error ? error.message : 'Topology is unavailable.'); });
+    void api.getServiceHealth(controller.signal).then((response) => {
+      setHealth(response); setHealthError(null);
+    }).catch((error: unknown) => { if (!(error instanceof DOMException && error.name === 'AbortError')) setHealthError(error instanceof Error ? error.message : 'Synthetic service health is unavailable.'); });
     return () => controller.abort();
   }, []);
 
-  const simulateCascade = async () => {
-    setSimulating(true); setCascade(null); setCascadeError(null);
-    try { setCascade(await api.simulateCascade()); }
-    catch (requestError) { setCascadeError(requestError instanceof Error ? requestError.message : 'Cascade simulation unavailable.'); }
-    finally { setSimulating(false); }
-  };
+  useEffect(() => {
+    setNodes((current) => current.map((node) => ({ ...node, status: health[node.id] || 'healthy' })));
+  }, [health]);
 
-  const getStatusColor = (status: string) => {
-    // Preserving ONLY shades of blue, navy, and white
-    switch (status) {
-      case 'critical':
-        return '#F7FAFC'; // White highlight for critical failures
-      case 'warning':
-      case 'degraded':
-        return '#63D6FF'; // Cyan accent for warnings/degraded
-      default:
-        return '#4F8BFF'; // Primary blue for healthy
-    }
-  };
+  useEffect(() => {
+    if (!selectedId) { setImpact(null); setImpactError(null); return; }
+    const controller = new AbortController(); setLoadingImpact(true); setImpactError(null);
+    void api.getServiceDependencyImpact(selectedId, controller.signal).then(setImpact).catch((error: unknown) => {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) setImpactError(error instanceof Error ? error.message : 'Dependency analysis is unavailable.');
+    }).finally(() => { if (!controller.signal.aborted) setLoadingImpact(false); });
+    return () => controller.abort();
+  }, [selectedId]);
 
-  return (
-    <div className="p-8 bg-background min-h-screen text-text-primary flex flex-col">
-      {/* Header */}
-      <div className="border-b border-white/[0.06] pb-5 mb-6">
-        <h1 className="text-2.5xl font-bold font-heading text-white tracking-tight">Service Topology</h1>
-        <p className="text-text-muted text-xs mt-1 leading-relaxed">Static backend topology · service health is synthetic/random, not production discovery or tracing.</p>
-        <p className="text-text-muted text-[10px] mt-2">Topology source: backend static graph · Health source: synthetic backend generator{lastRefresh ? ' · Refreshed ' + lastRefresh.toLocaleTimeString() : ''}</p>
-      </div>
-      {error && <p className="mb-4 text-xs text-primary">{error}</p>}
-      <div className="mb-4 flex flex-wrap items-center gap-3"><button onClick={() => void simulateCascade()} disabled={simulating} className="px-4 py-2 rounded-lg border border-accent/30 bg-accent/10 text-accent text-xs font-bold disabled:opacity-50 flex gap-2"><Play className="h-3.5 w-3.5 fill-current"/>{simulating ? 'Simulating…' : 'Simulate Cascade'}</button><span className="text-[10px] text-text-muted">SIMULATION ONLY</span></div>
-      {cascadeError && <div className="mb-4 rounded-xl border border-white/15 bg-surface px-4 py-3 text-xs text-text-muted">{cascadeError}</div>}
-      {cascade && <div className="mb-4 rounded-xl border border-accent/25 bg-surface p-4 text-xs"><p className="text-accent font-bold tracking-wider">CASCADE SIMULATION</p><p className="mt-2 text-white">Failed service: {cascade.failed_service}</p><p className="mt-1 text-text-muted">Affected services: {cascade.cascade_services.length ? cascade.cascade_services.join(', ') : 'None returned by backend'}</p></div>}
+  const selected = nodes.find((node) => node.id === selectedId) ?? null;
+  const related = useMemo(() => new Map((impact?.affected_services ?? []).map((service) => [service.service_id, service.depth])), [impact]);
+  const dependencies = selectedId ? edges.filter((edge) => edge.source === selectedId).map((edge) => nodes.find((node) => node.id === edge.target)?.label ?? edge.target) : [];
+  const dependents = selectedId ? edges.filter((edge) => edge.target === selectedId).map((edge) => nodes.find((node) => node.id === edge.source)?.label ?? edge.source) : [];
 
-      <div className="flex-1 bg-surface/65 border border-white/[0.08] rounded-2xl relative overflow-hidden flex shadow-glass min-h-[500px]">
-        {/* SVG Canvas Topology */}
-        <div className="flex-grow relative h-full">
-          {!error && nodes.length === 0 && <p className="absolute inset-0 flex items-center justify-center text-xs text-text-muted">Loading topology…</p>}
-          <svg className="w-full h-full min-h-[450px]" viewBox="0 0 800 400">
-            {/* Connection Edges */}
-            {edges.map((edge, i) => {
-              const source = nodes.find(n => n.id === edge.source);
-              const target = nodes.find(n => n.id === edge.target);
-              if (!source || !target) return null;
-
-              const isCriticalEdge = source.status === 'critical' || target.status === 'critical';
-              const strokeColor = isCriticalEdge ? 'rgba(255,255,255,0.2)' : 'rgba(79,139,255,0.3)';
-
-              return (
-                <motion.line
-                  key={i}
-                  x1={source.x}
-                  y1={source.y}
-                  x2={target.x}
-                  y2={target.y}
-                  stroke={strokeColor}
-                  strokeWidth="1.5"
-                  strokeDasharray="5,5"
-                  initial={{ pathLength: 0 }}
-                  animate={{ pathLength: 1 }}
-                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                />
-              );
-            })}
-
-            {/* Nodes */}
-            {nodes.map((node) => {
-              const color = getStatusColor(node.status);
-              const isSelected = selectedNode?.id === node.id;
-
-              return (
-                <g
-                  key={node.id}
-                  onClick={() => setSelectedNode(node)}
-                  onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedNode(node); } }}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Inspect ${node.label || node.name}; synthetic health ${node.status}`}
-                  className="cursor-pointer group"
-                >
-                  {/* Orbit Glow Ring for selected node */}
-                  {isSelected && (
-                    <circle
-                      cx={node.x}
-                      cy={node.y}
-                      r="32"
-                      fill="none"
-                      stroke={color}
-                      strokeWidth="1"
-                      className="opacity-30 animate-pulse-ring"
-                    />
-                  )}
-
-                  {/* Node Circle */}
-                  <circle
-                    cx={node.x}
-                    cy={node.y}
-                    r="22"
-                    fill="#081120"
-                    stroke={color}
-                    strokeWidth={isSelected ? '2.5' : '1.5'}
-                    className="transition-all duration-300 group-hover:stroke-accent"
-                  />
-
-                  {/* Type Icon indicators inside the node */}
-                  <g className="opacity-80" transform={`translate(${node.x - 7}, ${node.y - 7})`}>
-                    {node.type === 'database' ? (
-                      <Database className="w-3.5 h-3.5 text-text-primary" strokeWidth={1.5} />
-                    ) : node.type === 'gateway' ? (
-                      <Cpu className="w-3.5 h-3.5 text-text-primary" strokeWidth={1.5} />
-                    ) : (
-                      <Server className="w-3.5 h-3.5 text-text-primary" strokeWidth={1.5} />
-                    )}
-                  </g>
-
-                  {/* Node Label Text */}
-                  <text
-                    x={node.x}
-                    y={node.y + 36}
-                    fill={isSelected ? '#FFFFFF' : '#9FB0C7'}
-                    fontSize="11"
-                    fontWeight={isSelected ? '600' : '400'}
-                    textAnchor="middle"
-                    className="font-heading transition-colors"
-                  >
-                    {node.label || node.name}
-                  </text>
-                </g>
-              );
-            })}
-          </svg>
-        </div>
-
-        {/* Selected Node Drawer */}
-        {selectedNode && (
-          <motion.div
-            initial={{ x: 300, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            className="w-full lg:w-80 shrink-0 border-t lg:border-t-0 lg:border-l border-white/[0.08] bg-elevated/75 p-6 backdrop-blur-md flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex justify-between items-start mb-4">
-                <h2 className="text-lg font-bold font-heading text-white tracking-tight leading-tight">
-                  {selectedNode.label || selectedNode.name}
-                </h2>
-                <button
-                  onClick={() => setSelectedNode(null)}
-                  aria-label="Close service detail"
-                  className="text-text-muted hover:text-white text-xs font-mono"
-                >
-                  ESC
-                </button>
-              </div>
-
-              {/* Status Badge */}
-              <div className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider mb-6 border ${
-                selectedNode.status === 'critical'
-                  ? 'bg-white/10 border-white/20 text-white shadow-[0_0_10px_rgba(255,255,255,0.15)]'
-                  : selectedNode.status === 'warning' || selectedNode.status === 'degraded'
-                  ? 'bg-accent/15 border-accent/20 text-accent'
-                  : 'bg-primary/15 border-primary/20 text-primary'
-              }`}>
-                <span className="w-1.5 h-1.5 bg-current rounded-full" />
-                <span>{selectedNode.status}</span>
-              </div>
-
-              {/* Metrics */}
-              <div className="space-y-4">
-                <div className="p-3.5 bg-background/50 rounded-xl border border-white/[0.05]">
-                  <p className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">CPU Usage</p>
-                  <p className="font-bold text-base text-white font-heading mt-0.5">Not available</p>
-                </div>
-                <div className="p-3.5 bg-background/50 rounded-xl border border-white/[0.05]">
-                  <p className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">Memory Allocation</p>
-                  <p className="font-bold text-base text-white font-heading mt-0.5">Not available</p>
-                </div>
-                <div className="p-3.5 bg-background/50 rounded-xl border border-white/[0.05]">
-                  <p className="text-text-muted text-[10px] uppercase font-semibold tracking-wider">Network In/Out</p>
-                  <p className="font-bold text-base text-white font-heading mt-0.5">Not available</p>
-                </div>
-              </div>
-            </div>
-
-            {/* No tracing API is currently available. */}
-            <div className="pt-4 border-t border-white/[0.06]">
-              <div className="w-full py-2.5 border border-white/[0.08] text-text-muted text-xs font-semibold rounded-xl flex items-center justify-center space-x-2">
-                <Activity className="w-3.5 h-3.5" />
-                <span>Trace inspection is not available</span>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </div>
-    </div>
-  );
+  return <div className="min-h-[calc(100vh-4rem)] bg-background/30 p-4 sm:p-6 lg:p-8 text-text-primary overflow-y-auto"><div className="mx-auto max-w-7xl space-y-5">
+    <header className="border-b border-white/[.06] pb-5"><h1 className="font-heading text-2.5xl font-bold tracking-tight text-white">Service topology</h1><p className="mt-1 text-xs leading-relaxed text-text-muted">Arrow direction: a service points to the service it depends on. Health is synthetic backend data; this is deterministic dependency analysis, not distributed tracing.</p>{lastRefresh && <p className="mt-2 text-[10px] text-text-muted">Topology refreshed {lastRefresh.toLocaleTimeString()}</p>}</header>
+    <div className="flex flex-wrap items-center gap-3"><button onClick={() => setSelectedId('db')} className="flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/10 px-4 py-2 text-xs font-bold text-accent"><Play className="h-3.5 w-3.5 fill-current" />Simulate database cascade</button><span className="text-[10px] text-text-muted">Deterministic canonical graph</span></div>
+    {topologyError && <div className="rounded-xl border border-white/15 bg-surface px-4 py-3 text-xs text-text-muted">Topology error: {topologyError}</div>}{healthError && <div className="rounded-xl border border-white/15 bg-surface px-4 py-3 text-xs text-text-muted">Health status unavailable; topology remains available. {healthError}</div>}
+    <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_21rem]"><div className="min-w-0 overflow-hidden rounded-2xl border border-white/[.08] bg-surface/65 shadow-glass">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[.06] px-4 py-3 text-[10px] text-text-muted"><span>Click a service to inspect dependencies and impact.</span><span className="flex items-center gap-2"><span className="inline-block h-px w-6 bg-primary" /> depends on →</span></div>
+      <div className="relative min-h-[480px] p-2 sm:p-4">{!topologyError && nodes.length === 0 && <p className="absolute inset-0 grid place-items-center text-xs text-text-muted">Loading topology…</p>}<svg className="h-full min-h-[450px] w-full" viewBox="0 0 960 620" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Service dependency map"><defs><marker id="dependency-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#4f8bff" /></marker></defs>
+        {edges.map((edge) => { const source = nodes.find((node) => node.id === edge.source); const target = nodes.find((node) => node.id === edge.target); if (!source || !target) return null; const involved = selectedId === source.id || selectedId === target.id || related.has(source.id) || related.has(target.id); return <line key={`${edge.source}-${edge.target}`} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke={involved ? '#63d6ff' : 'rgba(79,139,255,.32)'} strokeWidth={involved ? 3 : 2} markerEnd="url(#dependency-arrow)" />; })}
+        {nodes.map((node) => { const isSelected = node.id === selectedId; const depth = related.get(node.id); const color = nodeColor(node.status); return <g key={node.id} role="button" tabIndex={0} aria-label={`Inspect ${node.label}; ${node.status}`} onClick={() => setSelectedId(node.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedId(node.id); } }} className="cursor-pointer">{isSelected && <circle cx={node.x} cy={node.y} r="48" fill="none" stroke="#63d6ff" strokeWidth="3" opacity=".65" />}{depth && !isSelected && <circle cx={node.x} cy={node.y} r="42" fill="none" stroke={depth === 1 ? '#63d6ff' : '#4f8bff'} strokeWidth="2" strokeDasharray="5 5" opacity=".7" />}<circle cx={node.x} cy={node.y} r="31" fill="#081120" stroke={color} strokeWidth={isSelected ? 4 : 2} />{node.id === 'db' ? <ellipse cx={node.x} cy={node.y} rx="13" ry="6" fill="none" stroke={color} /> : <rect x={node.x - 12} y={node.y - 10} width="24" height="20" rx="3" fill="none" stroke={color} />}<text x={node.x} y={node.y + 59} textAnchor="middle" fill="#dce7f7" fontSize="14" fontWeight={isSelected ? 700 : 500}>{node.label}</text>{depth && <text x={node.x} y={node.y - 48} textAnchor="middle" fill="#63d6ff" fontSize="11">{depth === 1 ? 'DIRECT IMPACT' : 'TRANSITIVE IMPACT'}</text>}</g>; })}</svg></div>
+      <div className="flex flex-wrap gap-x-4 gap-y-2 border-t border-white/[.06] px-4 py-3 text-[10px] text-text-muted"><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-primary" />Healthy</span><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-accent" />Degraded</span><span>Solid ring: selected</span><span>Dashed ring: affected by selected failure</span></div></div>
+      <aside className="min-w-0 rounded-2xl border border-white/[.08] bg-surface/85 p-5 shadow-glass xl:min-h-[540px]">{!selected ? <div className="grid h-full min-h-48 place-items-center text-center text-xs text-text-muted"><div><Activity className="mx-auto mb-3 h-5 w-5 text-primary" /><p className="text-white">Select a service</p><p className="mt-1">Inspect health, dependencies, and deterministic blast radius.</p></div></div> : <div className="space-y-5"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] uppercase tracking-widest text-text-muted">Selected service</p><h2 className="mt-1 font-heading text-xl font-bold text-white">{selected.label}</h2></div><button aria-label="Close service detail" onClick={() => setSelectedId(null)} className="rounded-lg p-1 text-text-muted hover:text-white"><X className="h-4 w-4" /></button></div><span className={`inline-flex rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wider ${statusClasses[selected.status]}`}>Synthetic health: {selected.status}</span><div className="rounded-xl border border-white/[.06] bg-background/45 p-3 text-xs"><p className="font-semibold text-white">Per-service resource metrics</p><p className="mt-1 text-text-muted">Synthetic metric unavailable. The API supplies health state only, not CPU, memory, or network telemetry per service.</p></div><Relation title="Depends on →" values={dependencies} empty="No service dependencies." /><Relation title="← Required by" values={dependents} empty="No services depend on this service." />{impactError && <div className="rounded-xl border border-white/15 p-3 text-xs text-text-muted">Dependency analysis error: {impactError}</div>}{loadingImpact && <p className="text-xs text-text-muted">Loading dependency analysis…</p>}{impact && <div className="space-y-3 border-t border-white/[.06] pt-4"><p className="text-[10px] font-bold uppercase tracking-widest text-accent">Failure impact if {impact.failed_service_label} fails</p><ImpactList title="Direct impact" values={impact.directly_affected_services.map((item) => item.label)} /><ImpactList title="Transitive impact" values={impact.transitively_affected_services.map((item) => item.label)} /><div className="grid grid-cols-3 gap-2 text-center text-[10px]"><Metric label="Affected" value={String(impact.impact_count)} /><Metric label="Depth" value={String(impact.cascade_depth)} /><Metric label="Severity" value={impact.severity} /></div></div>}</div>}</aside>
+    </section></div></div>;
 }
+function Relation({ title, values, empty }: { title: string; values: string[]; empty: string }) { return <div><p className="text-[10px] uppercase tracking-widest text-text-muted">{title}</p><p className="mt-1 text-xs text-white">{values.length ? values.join(', ') : empty}</p></div>; }
+function ImpactList({ title, values }: { title: string; values: string[] }) { return <div><p className="text-[10px] uppercase tracking-widest text-text-muted">{title}</p><p className="mt-1 text-xs text-white">{values.length ? values.join(', ') : 'None'}</p></div>; }
+function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-lg border border-white/[.06] bg-background/45 p-2"><p className="text-text-muted">{label}</p><p className="mt-1 font-semibold capitalize text-white">{value}</p></div>; }

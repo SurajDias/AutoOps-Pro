@@ -191,6 +191,10 @@ class AnomalyDetector:
             "anomaly_score": anomaly_score,          # ← 0–1 hybrid score, not a probability
             "reason":        reason,
             "is_anomaly":    bool(is_anomaly),       # ← kept for backward compat
+            # Expose the existing rule contribution so host telemetry can be
+            # debounced without treating an Isolation Forest trained on demo
+            # service metrics as a direct host-alert source.
+            "rule_score":    rule_score,
         }
 
     # ── Explain (kept for internal use) ──────────────────────────────────────

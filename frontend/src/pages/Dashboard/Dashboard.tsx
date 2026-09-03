@@ -28,10 +28,14 @@ export default function Dashboard() {
   const load = useCallback(async (signal?: AbortSignal, showRefresh = false) => {
     if (showRefresh) setRefreshing(true);
     try {
-      const [modeData, scenarioData, metricData, statusData, historyData, recentIncidents, statistics] = await Promise.all([
-        api.getMetricsMode(signal), api.getDemoScenarios(signal), api.getMetrics(signal), api.getSystemStatus(signal), api.getMetricsHistory(24, undefined, signal), api.getIncidentHistory(signal), api.getIncidentStatistics(signal),
+      const [modeData, scenarioData, metricData, statusData, historyData] = await Promise.all([
+        api.getMetricsMode(signal), api.getDemoScenarios(signal), api.getMetrics(signal), api.getSystemStatus(signal), api.getMetricsHistory(24, undefined, signal),
       ]);
-      setMode(modeData.mode); setScenarios(scenarioData); setMetrics(metricData); setStatus(statusData); setHistory(historyData); setIncidents(recentIncidents.slice(0, 5)); setIncidentStats(statistics); setLastUpdated(new Date()); setError(null); setStale(false);
+      const [incidentsResult, statisticsResult] = await Promise.allSettled([api.getIncidentHistory(signal), api.getIncidentStatistics(signal)]);
+      setMode(modeData.mode); setScenarios(scenarioData); setMetrics(metricData); setStatus(statusData); setHistory(historyData);
+      if (incidentsResult.status === 'fulfilled') setIncidents(incidentsResult.value.slice(0, 5));
+      if (statisticsResult.status === 'fulfilled') setIncidentStats(statisticsResult.value);
+      setLastUpdated(new Date()); setError(null); setStale(false);
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
       setStale(true); setError(friendlyError(requestError));
