@@ -138,6 +138,7 @@ def build_incident_report(
     timeline: list[dict[str, Any]],
     *,
     now: Callable[[], datetime] | None = None,
+    historical_intelligence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-safe report solely from its persisted incident inputs."""
     snapshot = incident.evidence_snapshot or None
@@ -153,6 +154,22 @@ def build_incident_report(
         "notice": "Operator feedback records the operator's decision regarding the recommendation. It does not indicate that the infrastructure change was executed.",
     }
     generated_at = (now or (lambda: datetime.now(timezone.utc)))()
+
+    # Build historical intelligence section if available
+    historical_section = None
+    if historical_intelligence:
+        historical_section = {
+            "available": True,
+            "summary": historical_intelligence.get("historical_summary", {}),
+            "similar_incidents": historical_intelligence.get("similar_incidents", []),
+            "notice": "Historical context: This section contains deterministic patterns derived from persisted incident records. It does not alter the incident's recorded diagnosis or recommendation.",
+        }
+    else:
+        historical_section = {
+            "available": False,
+            "message": "No historical intelligence context was provided.",
+        }
+
     return {
         "incident_id": incident.id,
         "generated_at": _timestamp(generated_at),
@@ -169,6 +186,7 @@ def build_incident_report(
             "recommendation": recommendation,
             "simulation": {"available": False, "label": "Non-destructive simulation", "message": "No simulation result was persisted for this incident.", "notice": "Simulation is a projected what-if result and does not represent an executed infrastructure change."},
             "operator_feedback": feedback or {"recorded": False, "message": "Operator feedback was not recorded."},
+            "historical_intelligence": historical_section,
             "timeline": timeline,
             "resolution": {"status": incident.status, "resolved_at": resolved_at, "elapsed_incident_duration": elapsed, "message": "The incident was transitioned to resolved state." if incident.status == "Resolved" else "The incident remains open."},
             "ai_observations": _observations(snapshot, recommendation),

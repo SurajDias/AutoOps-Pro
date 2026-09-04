@@ -70,6 +70,22 @@ def test_legacy_and_lifecycle_language_stays_within_fact_boundary():
     assert "not remediation duration" in report["sections"]["overview"]["duration_definition"].lower()
 
 
+def test_report_preserves_supplied_historical_intelligence_without_claiming_it_is_incident_evidence():
+    intelligence = {
+        "incident_id": 7,
+        "historical_summary": {"same_service_count": 2},
+        "similar_incidents": [{"id": 3, "service_name": "api"}],
+    }
+
+    report = build_incident_report(_incident(), [], historical_intelligence=intelligence)
+
+    section = report["sections"]["historical_intelligence"]
+    assert section["available"] is True
+    assert section["summary"] == intelligence["historical_summary"]
+    assert section["similar_incidents"] == intelligence["similar_incidents"]
+    assert "does not alter" in section["notice"]
+
+
 def test_feedback_and_dependency_impact_are_reported_without_execution_claims():
     incident = _incident(
         {"dependency_service_id": "gateway"},

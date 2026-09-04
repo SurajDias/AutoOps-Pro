@@ -29,6 +29,9 @@ export interface Incident { id: number; service_name: string; severity: string; 
 export interface IncidentDetail extends Incident { timeline: IncidentTimelineEvent[]; recommendation_explanation?: RecommendationExplanation | null; operator_feedback?: OperatorFeedback | null; }
 export interface IncidentStatistics { total_incidents: number; open_incidents: number; resolved_incidents: number; high_severity_incidents: number; }
 export interface IncidentPatterns { most_common_root_cause: string | null; most_affected_service: string | null; recurring_incidents: number; }
+export interface HistoricalIncidentData { id: number; service_name: string; severity: string; anomaly_type: string; root_cause: string; recommendation: string; status: IncidentStatus; timestamp: string | null; resolved_at: string | null; incident_duration: string | null; }
+export interface HistoricalSummary { same_service_count: number; same_root_cause_count: number; same_anomaly_count: number; most_frequently_recorded_recommendation: string | null; most_affected_service: string | null; root_cause_seen_before: boolean; similar_incidents_available: boolean; }
+export interface HistoricalIntelligence { incident_id: number; historical_summary: HistoricalSummary; similar_incidents: HistoricalIncidentData[]; }
 export interface Topology { nodes: Array<{ id: string; label: string }>; edges: Array<{ source: string; target: string }>; }
 export type ServiceHealth = Record<string, 'healthy' | 'degraded' | 'failed'>;
 export interface DependencyImpactService { service_id: string; label: string; depth: number; dependency_path: string[]; }
@@ -43,6 +46,7 @@ export interface IncidentReportSections {
   recommendation: Record<string, unknown>;
   simulation: Record<string, unknown>;
   operator_feedback: Record<string, unknown>;
+  historical_intelligence: Record<string, unknown>;
   timeline: IncidentTimelineEvent[];
   resolution: Record<string, unknown>;
   ai_observations: string[];
@@ -89,6 +93,7 @@ export function normalizeIncidentReport(response: IncidentReportResponse): Incid
     || !sections.executive_summary || !sections.overview || !sections.historical_evidence
     || !sections.root_cause || !sections.impact || !sections.recommendation
     || !sections.simulation || !sections.operator_feedback || !sections.resolution
+    || !sections.historical_intelligence
     || !Array.isArray(sections.timeline) || !Array.isArray(sections.ai_observations)) {
     throw new ApiError('AutoOps API returned an incomplete incident report.', 'response');
   }
@@ -113,6 +118,7 @@ export const api = {
   searchIncidents: (filters: { service_name?: string; root_cause?: string; severity?: string }, signal?: AbortSignal) => { const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value) as [string, string][]); return request<{ total_matches: number; incidents: Incident[] }>(`/incidents/search${params.size ? `?${params}` : ''}`, {}, signal); },
   getIncident: (id: number, signal?: AbortSignal) => request<IncidentDetail>(`/incidents/${id}`, {}, signal), updateIncident: (id: number, status: IncidentStatus, signal?: AbortSignal) => request<{ message: string; incident: Incident }>(`/incidents/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }, signal),
   getIncidentReport: async (id: number, signal?: AbortSignal) => normalizeIncidentReport(await request<IncidentReportResponse>(`/incidents/${id}/report`, {}, signal)),
+  getIncidentIntelligence: (id: number, signal?: AbortSignal) => request<HistoricalIntelligence>(`/incidents/${id}/intelligence`, {}, signal),
   submitIncidentFeedback: (id: number, feedback: { status: OperatorFeedback['status']; reason?: string }, signal?: AbortSignal) => request<{ message: string; operator_feedback: OperatorFeedback }>(`/incidents/${id}/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(feedback) }, signal),
   createIncident: (incident: Omit<Incident, 'id' | 'timestamp'>, signal?: AbortSignal) => request<{ message: string; incident_id: number }>('/incidents/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(incident) }, signal),
   getTopology: (signal?: AbortSignal) => request<Topology>('/topology', {}, signal), getServiceHealth: (signal?: AbortSignal) => request<ServiceHealth>('/service-health', {}, signal), getServiceDependencyImpact: (serviceId: string, signal?: AbortSignal) => request<DependencyImpact>(`/service-dependencies/${encodeURIComponent(serviceId)}/impact`, {}, signal), simulateCascade: (signal?: AbortSignal) => request<{ failed_service: string; cascade_services: string[]; status: Record<string, string> }>('/simulate-cascade', {}, signal),

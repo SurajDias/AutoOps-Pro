@@ -8,7 +8,13 @@ from sqlalchemy.orm import Session
 
 from app.database.models import Incident
 from app.database.postgres import get_db
-from app.schemas.incident import IncidentCreate, IncidentFeedbackCreate, IncidentUpdate
+from app.schemas.incident import (
+    IncidentCreate,
+    IncidentFeedbackCreate,
+    IncidentUpdate,
+    HistoricalIntelligence,
+)
+from app.services.historical_intelligence import get_historical_intelligence
 from app.storytelling.incident_report_generator import build_incident_report
 
 router = APIRouter()
@@ -232,11 +238,16 @@ def get_incident_report(incident_id: int, db: Session = Depends(get_db)):
     """Generate an auditable report from persisted incident facts only."""
     try:
         incident = db.query(Incident).filter(Incident.id == incident_id).first()
+        historical_intelligence = get_historical_intelligence(incident_id, db)
     except SQLAlchemyError as error:
         raise _database_unavailable(error) from error
     if incident is None:
         raise HTTPException(404, "Incident not found")
-    return build_incident_report(incident, _timeline_for(incident))
+    return build_incident_report(
+        incident,
+        _timeline_for(incident),
+        historical_intelligence=historical_intelligence,
+    )
 
 
 @router.get("/{incident_id}")
@@ -254,6 +265,35 @@ def get_incident(incident_id: int, db: Session = Depends(get_db)):
         "recommendation_explanation": _recorded_recommendation_explanation(incident),
         "operator_feedback": _operator_feedback_for(incident),
     }
+
+
+@router.get("/{incident_id}/intelligence")
+def get_incident_intelligence(incident_id: int, db: Session = Depends(get_db)):
+    """Get historical incident intelligence for investigation context.
+
+    Returns deterministic historical context derived from persisted incidents:
+    - count of previous incidents affecting the same service
+    - count of previous incidents with the same root cause
+    - count of previous incidents with the same anomaly type
+    - most common recommendation historically associated with the root cause
+    - most frequently affected service historically
+    - whether this root cause has been seen before
+    - list of relevant previous incidents (up to 5, deterministically selected)
+
+    All data comes from persisted incident records; no current telemetry or inference.
+    """
+    try:
+        incident = db.query(Incident).filter(Incident.id == incident_id).first()
+    except SQLAlchemyError as error:
+        raise _database_unavailable(error) from error
+    if incident is None:
+        raise HTTPException(404, "Incident not found")
+
+    try:
+        intelligence = get_historical_intelligence(incident_id, db)
+        return HistoricalIntelligence(**intelligence)
+    except SQLAlchemyError as error:
+        raise _database_unavailable(error) from error
 
 
 @router.put("/{incident_id}")
