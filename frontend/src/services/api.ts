@@ -22,7 +22,7 @@ export interface SystemStatus {
 }
 export interface RecommendationCandidate { action: string; label: string; score: number; rank: number; evidence: string[]; }
 export interface RecommendationExplanation { recommended_action: string; reason: string; action_score?: number; candidates: RecommendationCandidate[]; selection_factors: string[]; }
-export interface IncidentEvidenceSnapshot { captured_at?: string; metrics?: Partial<Metrics>; anomaly_score?: number; anomaly_reason?: string; rule_evidence?: boolean; isolation_forest_anomaly?: boolean; root_cause?: string; primary_issue?: string; root_cause_confidence?: number; severity?: string; risk?: string; recommended_action?: string; recommendation_explanation?: RecommendationExplanation; trend?: string; estimated_failure_window?: string; dependency_service_id?: string | null; }
+export interface IncidentEvidenceSnapshot { captured_at?: string; metrics?: Partial<Metrics>; anomaly_score?: number; anomaly_reason?: string; rule_evidence?: boolean; isolation_forest_anomaly?: boolean; detection_thresholds?: Partial<Metrics>; root_cause?: string; primary_issue?: string; root_cause_confidence?: number; root_cause_details?: string[]; severity?: string; risk?: string; recommended_action?: string; recommendation_explanation?: RecommendationExplanation; trend?: string; estimated_failure_window?: string; dependency_service_id?: string | null; }
 export interface OperatorFeedback { status: 'accepted' | 'rejected'; reason: string | null; created_at: string; action: string; }
 export interface IncidentTimelineEvent { timestamp: string; event_type: 'created' | 'evidence_captured' | 'evidence_unavailable' | 'diagnosed' | 'recommended' | 'recommendation_accepted' | 'recommendation_rejected' | 'resolved'; title: string; description: string; }
 export interface Incident { id: number; service_name: string; severity: string; anomaly_type: string; root_cause: string; recommendation: string; status: IncidentStatus; timestamp: string; resolved_at?: string | null; evidence_snapshot?: IncidentEvidenceSnapshot | null; }
@@ -34,6 +34,26 @@ export type ServiceHealth = Record<string, 'healthy' | 'degraded' | 'failed'>;
 export interface DependencyImpactService { service_id: string; label: string; depth: number; dependency_path: string[]; }
 export interface DependencyImpact { failed_service: string; failed_service_label: string; directly_affected_services: DependencyImpactService[]; transitively_affected_services: DependencyImpactService[]; affected_services: DependencyImpactService[]; impact_count: number; cascade_depth: number; severity: string; blast_radius: string; }
 export interface SimulationResult { action: string; updated_metrics: { cpu_usage: number; latency: number }; failure_risk: string; confidence: string; confidence_pct: number; severity: string; root_cause: string; explanation: string; }
+export interface IncidentReportSections {
+  executive_summary: { recorded_facts: Record<string, unknown>; ai_assessment: string };
+  overview: Record<string, unknown>;
+  historical_evidence: Record<string, unknown>;
+  root_cause: { recorded_facts: Record<string, unknown>; ai_assessment: string };
+  impact: Record<string, unknown>;
+  recommendation: Record<string, unknown>;
+  simulation: Record<string, unknown>;
+  operator_feedback: Record<string, unknown>;
+  timeline: IncidentTimelineEvent[];
+  resolution: Record<string, unknown>;
+  ai_observations: string[];
+}
+export interface IncidentReport {
+  incident_id: number;
+  generated_at: string;
+  generation: { provider: string; fact_boundary: string };
+  sections: IncidentReportSections;
+}
+type IncidentReportResponse = Omit<IncidentReport, 'sections'> & Partial<IncidentReportSections> & { sections?: Partial<IncidentReportSections> | unknown };
 export interface ModelStatus { model_loaded: boolean; model_path: string | null; features: string[]; status: string; }
 export interface TrainingResponse { success: boolean; message: string; total_samples?: number; n_anomalies_detected?: number; anomaly_rate?: number; }
 
@@ -56,6 +76,30 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
   try { return await response.json() as T; } catch { throw new ApiError('AutoOps API returned an invalid response.', 'response'); }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function normalizeIncidentReport(response: IncidentReportResponse): IncidentReport {
+  // Deployments have returned both nested, top-level, and hybrid section
+  // layouts. Merge them so a metadata `sections` property cannot hide valid
+  // top-level report sections; nested values remain authoritative.
+  const sections = { ...response, ...(isRecord(response.sections) ? response.sections : {}) };
+  if (!response.incident_id || !response.generated_at || !response.generation
+    || !sections.executive_summary || !sections.overview || !sections.historical_evidence
+    || !sections.root_cause || !sections.impact || !sections.recommendation
+    || !sections.simulation || !sections.operator_feedback || !sections.resolution
+    || !Array.isArray(sections.timeline) || !Array.isArray(sections.ai_observations)) {
+    throw new ApiError('AutoOps API returned an incomplete incident report.', 'response');
+  }
+  return {
+    incident_id: response.incident_id,
+    generated_at: response.generated_at,
+    generation: response.generation,
+    sections: sections as IncidentReportSections,
+  };
+}
+
 export const api = {
   getMetrics: (signal?: AbortSignal) => request<Metrics>('/metrics', {}, signal),
   getSystemStatus: (signal?: AbortSignal) => request<SystemStatus>('/system-status', {}, signal),
@@ -68,6 +112,7 @@ export const api = {
   getIncidentStatistics: (signal?: AbortSignal) => request<IncidentStatistics>('/incidents/statistics', {}, signal), getIncidentPatterns: (signal?: AbortSignal) => request<IncidentPatterns>('/incidents/patterns', {}, signal),
   searchIncidents: (filters: { service_name?: string; root_cause?: string; severity?: string }, signal?: AbortSignal) => { const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value) as [string, string][]); return request<{ total_matches: number; incidents: Incident[] }>(`/incidents/search${params.size ? `?${params}` : ''}`, {}, signal); },
   getIncident: (id: number, signal?: AbortSignal) => request<IncidentDetail>(`/incidents/${id}`, {}, signal), updateIncident: (id: number, status: IncidentStatus, signal?: AbortSignal) => request<{ message: string; incident: Incident }>(`/incidents/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }, signal),
+  getIncidentReport: async (id: number, signal?: AbortSignal) => normalizeIncidentReport(await request<IncidentReportResponse>(`/incidents/${id}/report`, {}, signal)),
   submitIncidentFeedback: (id: number, feedback: { status: OperatorFeedback['status']; reason?: string }, signal?: AbortSignal) => request<{ message: string; operator_feedback: OperatorFeedback }>(`/incidents/${id}/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(feedback) }, signal),
   createIncident: (incident: Omit<Incident, 'id' | 'timestamp'>, signal?: AbortSignal) => request<{ message: string; incident_id: number }>('/incidents/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(incident) }, signal),
   getTopology: (signal?: AbortSignal) => request<Topology>('/topology', {}, signal), getServiceHealth: (signal?: AbortSignal) => request<ServiceHealth>('/service-health', {}, signal), getServiceDependencyImpact: (serviceId: string, signal?: AbortSignal) => request<DependencyImpact>(`/service-dependencies/${encodeURIComponent(serviceId)}/impact`, {}, signal), simulateCascade: (signal?: AbortSignal) => request<{ failed_service: string; cascade_services: string[]; status: Record<string, string> }>('/simulate-cascade', {}, signal),

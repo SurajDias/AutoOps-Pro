@@ -1,6 +1,7 @@
 """Incident lifecycle integration coverage against the isolated PostgreSQL DB."""
 
 from collections.abc import Callable
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -107,9 +108,16 @@ def test_incident_creation_and_listing(client, trigger_condition):
         "anomaly_reason": status["anomaly_reason"],
         "rule_evidence": True,
         "isolation_forest_anomaly": status["detection_evidence"]["isolation_forest_anomaly"],
+        "detection_thresholds": status["detection_evidence"]["thresholds"],
         "root_cause": ROOT_CAUSE,
         "primary_issue": "High CPU",
         "root_cause_confidence": status["confidence"],
+        "root_cause_details": [
+            "CPU at 90.0% (threshold: 60%)",
+            "Memory at 91.0% (threshold: 75%)",
+            "Response time 400.0ms (threshold: 120ms)",
+            "Error rate 6.0% (threshold: 1%)",
+        ],
         "severity": "Critical",
         "risk": status["risk"],
         "recommended_action": status["recommended_action"],
@@ -151,6 +159,28 @@ def test_legacy_incident_has_no_fabricated_recommendation_reasoning(client):
     detail = client.get(f"/incidents/{response.json()['incident_id']}")
     assert detail.status_code == 200
     assert detail.json()["recommendation_explanation"] is None
+
+
+def test_legacy_open_incident_does_not_suppress_new_evidence_backed_incident(client, trigger_condition):
+    legacy = client.post("/incidents/", json={
+        "service_name": "api-gateway",
+        "severity": "Critical",
+        "anomaly_type": "Legacy record",
+        "root_cause": ROOT_CAUSE,
+        "recommendation": "Monitor",
+        "status": "Open",
+    })
+    assert legacy.status_code == 200
+
+    trigger_condition()
+    incidents = _all_incidents(client)
+
+    assert len(incidents) == 2
+    legacy_record = next(item for item in incidents if item["id"] == legacy.json()["incident_id"])
+    new_record = next(item for item in incidents if item["id"] != legacy_record["id"])
+    assert legacy_record["evidence_snapshot"] is None
+    assert new_record["evidence_snapshot"]["metrics"]["cpu"] == 90
+    assert new_record["evidence_snapshot"]["recommendation_explanation"]["recommended_action"] == new_record["recommendation"]
 
 
 def test_accept_feedback_is_persisted_with_the_recorded_recommendation(client, trigger_condition):
@@ -330,3 +360,89 @@ def test_different_incident_identity_does_not_deduplicate(client, trigger_condit
         "postgres-primary",
     }
     assert {incident["status"] for incident in incidents} == {"Open"}
+
+
+def test_incident_report_endpoint_is_structured_and_uses_persisted_snapshot(client, trigger_condition, monkeypatch):
+    trigger_condition(cpu=90, response_time=400)
+    incident = _all_incidents(client)[0]
+
+    # A report must not query today's telemetry to reconstruct history.
+    monkeypatch.setattr(system, "get_system_status", lambda: pytest.fail("current telemetry must not be read"))
+    response = client.get(f"/incidents/{incident['id']}/report")
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["incident_id"] == incident["id"]
+    assert report["generation"]["provider"] == "deterministic"
+    assert report["sections"]["historical_evidence"]["metrics"] == incident["evidence_snapshot"]["metrics"]
+    assert report["sections"]["root_cause"]["recorded_facts"]["primary_root_cause"] == ROOT_CAUSE
+    assert report["sections"]["recommendation"]["recommended_action"] == incident["recommendation"]
+    assert report["sections"]["recommendation"]["decision_engine_ranking_signal"] == incident["evidence_snapshot"]["recommendation_explanation"]["action_score"]
+    assert "probability" not in report["sections"]["recommendation"].get("reasoning", "").lower()
+    assert report["sections"]["simulation"]["available"] is False
+    assert "projected what-if" in report["sections"]["simulation"]["notice"].lower()
+    assert report["sections"]["timeline"] == client.get(f"/incidents/{incident['id']}").json()["timeline"]
+
+
+def test_legacy_incident_report_does_not_fabricate_historical_sections(client):
+    created = client.post("/incidents/", json={
+        "service_name": "payment", "severity": "Warning", "anomaly_type": "Legacy record",
+        "root_cause": "Legacy cause", "recommendation": "Monitor", "status": "Open",
+    }).json()
+    report = client.get(f"/incidents/{created['incident_id']}/report").json()
+
+    assert report["sections"]["historical_evidence"] == {
+        "available": False,
+        "message": "Historical evidence was not captured for this incident.",
+        "metrics": {},
+    }
+    assert report["sections"]["recommendation"]["reasoning"] == "Not available in the persisted incident record."
+    assert report["sections"]["simulation"]["available"] is False
+    assert report["sections"]["operator_feedback"]["recorded"] is False
+
+
+def test_report_feedback_and_resolution_never_claim_execution(client, trigger_condition):
+    trigger_condition()
+    incident_id = _all_incidents(client)[0]["id"]
+    client.post(f"/incidents/{incident_id}/feedback", json={"status": "accepted", "reason": "Approved for review."})
+    client.put(f"/incidents/{incident_id}", json={"status": "Resolved"})
+
+    report = client.get(f"/incidents/{incident_id}/report").json()
+    feedback = report["sections"]["operator_feedback"]
+    assert feedback["status"] == "accepted"
+    assert "does not indicate" in feedback["notice"]
+    assert report["sections"]["resolution"]["status"] == "Resolved"
+    assert report["sections"]["resolution"]["resolved_at"]
+    assert "transitioned to resolved state" in report["sections"]["resolution"]["message"].lower()
+    assert "remediation" not in report["sections"]["resolution"]["message"].lower()
+    assert "remediation duration" in report["sections"]["overview"]["duration_definition"]
+
+
+def test_report_preserves_canonical_dependency_direction_and_zero_dependents(client, test_engine):
+    with Session(bind=test_engine) as session:
+        incident = Incident(
+            service_name="database", severity="High", anomaly_type="Dependency failure",
+            root_cause="Database unavailable", recommendation="Investigate",
+            timestamp=datetime(2026, 1, 1),
+            evidence_snapshot={"dependency_service_id": "db"},
+        )
+        session.add(incident)
+        session.commit()
+        incident_id = incident.id
+    impact = client.get(f"/incidents/{incident_id}/report").json()["sections"]["impact"]
+    assert impact["failed_service"] == "db"
+    assert "gateway" in [item["service_id"] for item in impact["transitive_dependents"]]
+
+    with Session(bind=test_engine) as session:
+        leaf = Incident(
+            service_name="gateway", severity="Warning", anomaly_type="Dependency failure",
+            root_cause="Gateway unavailable", recommendation="Investigate",
+            timestamp=datetime(2026, 1, 1),
+            evidence_snapshot={"dependency_service_id": "gateway"},
+        )
+        session.add(leaf)
+        session.commit()
+        leaf_id = leaf.id
+    zero = client.get(f"/incidents/{leaf_id}/report").json()["sections"]["impact"]
+    assert zero["total_affected"] == 0
+    assert zero["zero_downstream_explanation"] == "No downstream dependents found in the canonical topology."

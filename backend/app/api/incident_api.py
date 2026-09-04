@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.database.models import Incident
 from app.database.postgres import get_db
 from app.schemas.incident import IncidentCreate, IncidentFeedbackCreate, IncidentUpdate
+from app.storytelling.incident_report_generator import build_incident_report
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -224,6 +225,18 @@ def record_operator_feedback(incident_id: int, feedback: IncidentFeedbackCreate,
     except SQLAlchemyError as error:
         db.rollback()
         raise _database_unavailable(error) from error
+
+
+@router.get("/{incident_id}/report")
+def get_incident_report(incident_id: int, db: Session = Depends(get_db)):
+    """Generate an auditable report from persisted incident facts only."""
+    try:
+        incident = db.query(Incident).filter(Incident.id == incident_id).first()
+    except SQLAlchemyError as error:
+        raise _database_unavailable(error) from error
+    if incident is None:
+        raise HTTPException(404, "Incident not found")
+    return build_incident_report(incident, _timeline_for(incident))
 
 
 @router.get("/{incident_id}")

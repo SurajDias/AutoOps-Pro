@@ -174,6 +174,10 @@ def create_incident_record(incident_data):
                 Incident.severity == incident_data.get("severity"),
                 Incident.root_cause == incident_data.get("root_cause"),
                 Incident.status == "Open",
+                # A legacy row has no immutable diagnostic record. It must not
+                # suppress a newly detected, evidence-backed incident, and we
+                # must never backfill it with current telemetry.
+                Incident.evidence_snapshot.isnot(None),
             )
             .first()
         )
