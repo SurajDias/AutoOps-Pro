@@ -15,3 +15,7 @@ class IncidentResponse(IncidentCreate):
 
     class Config:
         from_attributes = True
+
+
+class IncidentUpdate(BaseModel):
+    status: str
