@@ -2,13 +2,16 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.database.models import Incident
-from app.database.postgres import get_db
+from app.database.models import Incident, RecommendationExecution
 from app.schemas.incident import (
+    ExecutionCreate,
+    ExecutionFailureCreate,
+    ExecutionOutcomeCreate,
+    ExecutionResponse,
     IncidentCreate,
     IncidentFeedbackCreate,
     IncidentUpdate,
@@ -16,9 +19,14 @@ from app.schemas.incident import (
 )
 from app.services.historical_intelligence import get_historical_intelligence
 from app.storytelling.incident_report_generator import build_incident_report
+from app.database.postgres import get_db
 
-router = APIRouter()
-logger = logging.getLogger(__name__)
+ALLOWED_EXECUTION_TRANSITIONS = {
+    "PLANNED": {"ACCEPTED", "CANCELLED"},
+    "ACCEPTED": {"EXECUTING", "CANCELLED"},
+    "EXECUTING": {"EXECUTED", "FAILED"},
+}
+TERMINAL_EXECUTION_STATES = {"EXECUTED", "FAILED", "CANCELLED"}
 
 
 def _iso_timestamp(value):
@@ -130,6 +138,10 @@ def _database_unavailable(error: Exception) -> HTTPException:
     """Keep infrastructure details in server logs while returning a safe API error."""
     logger.exception("Incident database operation failed: %s", error)
     return HTTPException(503, "Incident database is temporarily unavailable. No incident data was substituted.")
+
+
+router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/")
@@ -329,3 +341,272 @@ def delete_incident(incident_id: int, db: Session = Depends(get_db)):
     except SQLAlchemyError as error:
         db.rollback()
         raise _database_unavailable(error) from error
+
+
+@router.post("/{incident_id}/executions")
+def create_execution(incident_id: int, payload: ExecutionCreate, db: Session = Depends(get_db)):
+    """Create a planned recommendation execution record without performing any infrastructure action."""
+    try:
+        execution = _record_execution_attempt(db, incident_id, payload)
+        return {
+            "message": "Execution planned and recorded.",
+            "execution": _execution_response_payload(execution),
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise _database_unavailable(error) from error
+
+
+@router.post("/{incident_id}/executions/{execution_id}/accept")
+def accept_execution(incident_id: int, execution_id: int, db: Session = Depends(get_db)):
+    """Transition a planned execution to ACCEPTED without executing the recommendation."""
+    try:
+        execution = _require_execution_for_incident(db, incident_id, execution_id)
+        if execution.execution_status != "PLANNED":
+            raise HTTPException(409, "Execution can only be accepted from PLANNED state.")
+        execution.execution_status = "ACCEPTED"
+        db.commit()
+        db.refresh(execution)
+        return {
+            "message": "Execution accepted.",
+            "execution": _execution_response_payload(execution),
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise _database_unavailable(error) from error
+
+
+@router.post("/{incident_id}/executions/{execution_id}/start")
+def start_execution(incident_id: int, execution_id: int, db: Session = Depends(get_db)):
+    """Mark a previously accepted execution as actively executing."""
+    try:
+        execution = _require_execution_for_incident(db, incident_id, execution_id)
+        if execution.execution_status != "ACCEPTED":
+            raise HTTPException(409, "Execution can only start from ACCEPTED state.")
+        execution.execution_status = "EXECUTING"
+        execution.started_at = _utc_now_naive()
+        db.commit()
+        db.refresh(execution)
+        return {
+            "message": "Execution started.",
+            "execution": _execution_response_payload(execution),
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise _database_unavailable(error) from error
+
+
+@router.post("/{incident_id}/executions/{execution_id}/complete")
+def complete_execution(incident_id: int, execution_id: int, db: Session = Depends(get_db)):
+    """Record that an executing recommendation reached the EXECUTED lifecycle state."""
+    try:
+        execution = _require_execution_for_incident(db, incident_id, execution_id)
+        if execution.execution_status != "EXECUTING":
+            raise HTTPException(409, "Execution can only be completed from EXECUTING state.")
+        execution.execution_status = "EXECUTED"
+        execution.completed_at = _utc_now_naive()
+        db.commit()
+        db.refresh(execution)
+        return {
+            "message": "Execution completed.",
+            "execution": _execution_response_payload(execution),
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise _database_unavailable(error) from error
+
+
+@router.post("/{incident_id}/executions/{execution_id}/fail")
+def fail_execution(
+    incident_id: int,
+    execution_id: int,
+    payload: ExecutionFailureCreate,
+    db: Session = Depends(get_db),
+):
+    """Record an execution failure without claiming the incident was remediated."""
+    try:
+        execution = _require_execution_for_incident(db, incident_id, execution_id)
+        if execution.execution_status != "EXECUTING":
+            raise HTTPException(409, "Execution can only fail from EXECUTING state.")
+        execution.execution_status = "FAILED"
+        execution.completed_at = _utc_now_naive()
+        execution.error_code = payload.error_code.strip() if payload.error_code else None
+        execution.error_message = payload.error_message.strip() if payload.error_message else None
+        db.commit()
+        db.refresh(execution)
+        return {
+            "message": "Execution failed.",
+            "execution": _execution_response_payload(execution),
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise _database_unavailable(error) from error
+
+
+@router.post("/{incident_id}/executions/{execution_id}/cancel")
+def cancel_execution(incident_id: int, execution_id: int, db: Session = Depends(get_db)):
+    """Cancel a planned or accepted execution without performing infrastructure cancellation."""
+    try:
+        execution = _require_execution_for_incident(db, incident_id, execution_id)
+        if execution.execution_status not in {"PLANNED", "ACCEPTED"}:
+            raise HTTPException(409, "Execution can only be cancelled from PLANNED or ACCEPTED state.")
+        execution.execution_status = "CANCELLED"
+        execution.completed_at = _utc_now_naive()
+        db.commit()
+        db.refresh(execution)
+        return {
+            "message": "Execution cancelled.",
+            "execution": _execution_response_payload(execution),
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise _database_unavailable(error) from error
+
+
+@router.post("/{incident_id}/executions/{execution_id}/outcome")
+def assess_outcome(
+    incident_id: int,
+    execution_id: int,
+    payload: ExecutionOutcomeCreate,
+    db: Session = Depends(get_db),
+):
+    """Record outcome assessment separately from incident resolution or execution status."""
+    try:
+        execution = _require_execution_for_incident(db, incident_id, execution_id)
+        if execution.execution_status != "EXECUTED":
+            raise HTTPException(409, "Outcome assessment can only be recorded for an EXECUTED execution.")
+        execution.outcome_status = payload.outcome_status
+        execution.outcome_assessed_by = payload.outcome_assessed_by
+        execution.outcome_assessed_at = _utc_now_naive()
+        db.commit()
+        db.refresh(execution)
+        return {
+            "message": "Outcome assessment recorded.",
+            "execution": _execution_response_payload(execution),
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise _database_unavailable(error) from error
+
+
+@router.get("/{incident_id}/executions/{execution_id}")
+def get_execution(incident_id: int, execution_id: int, db: Session = Depends(get_db)):
+    """Return a persisted execution record for the incident."""
+    try:
+        execution = _require_execution_for_incident(db, incident_id, execution_id)
+        return _execution_response_payload(execution)
+    except HTTPException:
+        raise
+    except SQLAlchemyError as error:
+        raise _database_unavailable(error) from error
+
+
+@router.get("/{incident_id}/executions")
+def list_executions(incident_id: int, db: Session = Depends(get_db)):
+    """List all execution attempts for an incident in deterministic order."""
+    _require_incident(db, incident_id)
+    try:
+        executions = (
+            db.query(RecommendationExecution)
+            .filter(RecommendationExecution.incident_id == incident_id)
+            .order_by(RecommendationExecution.attempt_number.desc(), RecommendationExecution.id.desc())
+            .all()
+        )
+        return {
+            "incident_id": incident_id,
+            "executions": [_execution_response_payload(item) for item in executions],
+        }
+    except SQLAlchemyError as error:
+        raise _database_unavailable(error) from error
+
+
+def _utc_now_naive() -> datetime:
+    """Return the current UTC time in the same naive-datetime format used by the persisted models."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _execution_response_payload(execution: RecommendationExecution) -> dict:
+    """Serialize a persisted execution record using the request/response schema."""
+    payload = {column.name: getattr(execution, column.name) for column in RecommendationExecution.__table__.columns}
+    for field_name in ("started_at", "completed_at", "outcome_assessed_at"):
+        payload[field_name] = _iso_timestamp(payload.get(field_name))
+    return ExecutionResponse.model_validate(payload).model_dump()
+
+
+def _require_incident(db: Session, incident_id: int) -> Incident:
+    """Fetch an incident and raise a 404 when it is absent."""
+    incident = db.query(Incident).filter(Incident.id == incident_id).first()
+    if incident is None:
+        raise HTTPException(404, "Incident not found")
+    return incident
+
+
+def _require_execution_for_incident(db: Session, incident_id: int, execution_id: int) -> RecommendationExecution:
+    """Fetch an execution scoped to the incident path; cross-incident access is not allowed."""
+    execution = db.query(RecommendationExecution).filter(RecommendationExecution.id == execution_id).first()
+    if execution is None or execution.incident_id != incident_id:
+        raise HTTPException(404, "Execution not found for incident")
+    return execution
+
+
+def _next_attempt_number(db: Session, incident_id: int) -> int:
+    """Allocate a deterministic next attempt number using a PostgreSQL advisory lock."""
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+        {"lock_key": f"recommendation_execution:{incident_id}"},
+    )
+    max_attempt = (
+        db.query(func.coalesce(func.max(RecommendationExecution.attempt_number), 0))
+        .filter(RecommendationExecution.incident_id == incident_id)
+        .scalar()
+    )
+    return int(max_attempt) + 1
+
+
+def _record_execution_attempt(db: Session, incident_id: int, payload: ExecutionCreate) -> RecommendationExecution:
+    """Persist a new planned execution attempt without performing any infrastructure action."""
+    incident = _require_incident(db, incident_id)
+    recommendation = payload.recommendation.strip()
+    if not recommendation:
+        raise HTTPException(422, "Recommendation must not be blank.")
+    attempt_number = _next_attempt_number(db, incident_id)
+    execution = RecommendationExecution(
+        incident_id=incident.id,
+        recommendation=recommendation,
+        execution_status="PLANNED",
+        execution_method=payload.execution_method.strip() if payload.execution_method else None,
+        actor=payload.actor.strip() if payload.actor else None,
+        attempt_number=attempt_number,
+        started_at=None,
+        completed_at=None,
+        error_code=None,
+        error_message=None,
+        outcome_status=None,
+        outcome_assessed_by=None,
+        outcome_assessed_at=None,
+    )
+    db.add(execution)
+    db.commit()
+    db.refresh(execution)
+    return execution
