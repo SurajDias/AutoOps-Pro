@@ -121,9 +121,61 @@ export const api = {
   getIncidentIntelligence: (id: number, signal?: AbortSignal) => request<HistoricalIntelligence>(`/incidents/${id}/intelligence`, {}, signal),
   submitIncidentFeedback: (id: number, feedback: { status: OperatorFeedback['status']; reason?: string }, signal?: AbortSignal) => request<{ message: string; operator_feedback: OperatorFeedback }>(`/incidents/${id}/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(feedback) }, signal),
   createIncident: (incident: Omit<Incident, 'id' | 'timestamp'>, signal?: AbortSignal) => request<{ message: string; incident_id: number }>('/incidents/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(incident) }, signal),
+  createRecommendationExecution: (incidentId: number, payload: RecommendationExecutionCreateRequest, signal?: AbortSignal) => request<{ message: string; execution: RecommendationExecution }>(`/incidents/${incidentId}/executions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, signal),
+  acceptRecommendationExecution: (incidentId: number, executionId: number, signal?: AbortSignal) => request<{ message: string; execution: RecommendationExecution }>(`/incidents/${incidentId}/executions/${executionId}/accept`, { method: 'POST' }, signal),
+  startRecommendationExecution: (incidentId: number, executionId: number, signal?: AbortSignal) => request<{ message: string; execution: RecommendationExecution }>(`/incidents/${incidentId}/executions/${executionId}/start`, { method: 'POST' }, signal),
+  completeRecommendationExecution: (incidentId: number, executionId: number, signal?: AbortSignal) => request<{ message: string; execution: RecommendationExecution }>(`/incidents/${incidentId}/executions/${executionId}/complete`, { method: 'POST' }, signal),
+  failRecommendationExecution: (incidentId: number, executionId: number, payload: RecommendationExecutionFailureRequest, signal?: AbortSignal) => request<{ message: string; execution: RecommendationExecution }>(`/incidents/${incidentId}/executions/${executionId}/fail`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, signal),
+  cancelRecommendationExecution: (incidentId: number, executionId: number, signal?: AbortSignal) => request<{ message: string; execution: RecommendationExecution }>(`/incidents/${incidentId}/executions/${executionId}/cancel`, { method: 'POST' }, signal),
+  recordRecommendationOutcome: (incidentId: number, executionId: number, payload: RecommendationOutcomeRequest, signal?: AbortSignal) => request<{ message: string; execution: RecommendationExecution }>(`/incidents/${incidentId}/executions/${executionId}/outcome`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, signal),
+  getRecommendationExecution: (incidentId: number, executionId: number, signal?: AbortSignal) => request<RecommendationExecution>(`/incidents/${incidentId}/executions/${executionId}`, {}, signal),
+  getExecutions: (incidentId: number, signal?: AbortSignal) => request<RecommendationExecutionListResponse>(`/incidents/${incidentId}/executions`, {}, signal),
   getTopology: (signal?: AbortSignal) => request<Topology>('/topology', {}, signal), getServiceHealth: (signal?: AbortSignal) => request<ServiceHealth>('/service-health', {}, signal), getServiceDependencyImpact: (serviceId: string, signal?: AbortSignal) => request<DependencyImpact>(`/service-dependencies/${encodeURIComponent(serviceId)}/impact`, {}, signal), simulateCascade: (signal?: AbortSignal) => request<{ failed_service: string; cascade_services: string[]; status: Record<string, string> }>('/simulate-cascade', {}, signal),
   simulateAction: (payload: { metrics: { cpu_usage: number; latency: number }; action: string; context?: Record<string, string> }, signal?: AbortSignal) => request<{ success: boolean; data: SimulationResult }>('/simulator/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, signal),
   trainModel: (body: { data_path: string; contamination: number }, signal?: AbortSignal) => request<TrainingResponse>('/ml/train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, signal), getModelStatus: (signal?: AbortSignal) => request<ModelStatus>('/ml/model-status', {}, signal),
 };
 
 export const formatConfidence = (value: number) => `${Math.round(value <= 1 ? value * 100 : value)}%`;
+
+export type RecommendationExecutionStatus = 'PLANNED' | 'ACCEPTED' | 'EXECUTING' | 'EXECUTED' | 'FAILED' | 'CANCELLED';
+export type RecommendationExecutionMethod = 'MANUAL' | 'AUTOMATED' | 'API';
+export type OutcomeStatus = 'IMPROVED' | 'NO_CHANGE' | 'DEGRADED' | 'INCONCLUSIVE' | 'UNKNOWN';
+export type OutcomeAssessedBy = 'AUTOMATED' | 'OPERATOR' | 'EXTERNAL';
+
+export interface RecommendationExecution {
+  id: number;
+  incident_id: number;
+  recommendation: string;
+  execution_status: RecommendationExecutionStatus;
+  execution_method: RecommendationExecutionMethod | null;
+  actor: string | null;
+  attempt_number: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  outcome_status: OutcomeStatus | null;
+  outcome_assessed_by: OutcomeAssessedBy | null;
+  outcome_assessed_at: string | null;
+}
+
+export interface RecommendationExecutionCreateRequest {
+  recommendation: string;
+  execution_method?: RecommendationExecutionMethod;
+  actor?: string;
+}
+
+export interface RecommendationExecutionFailureRequest {
+  error_code?: string;
+  error_message?: string;
+}
+
+export interface RecommendationOutcomeRequest {
+  outcome_status: OutcomeStatus;
+  outcome_assessed_by: OutcomeAssessedBy;
+}
+
+export interface RecommendationExecutionListResponse {
+  incident_id: number;
+  executions: RecommendationExecution[];
+}
