@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Integer, String
+from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, CheckConstraint
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import relationship
 
 from app.database.postgres import Base
 
@@ -35,3 +36,40 @@ class Incident(Base):
     # Captured once by the automatic incident-creation path. Resolution only
     # changes lifecycle state, preserving the original diagnostic evidence.
     evidence_snapshot = Column(JSONB, nullable=True)
+
+
+class RecommendationExecution(Base):
+    __tablename__ = "recommendation_executions"
+    __table_args__ = (
+        CheckConstraint("attempt_number >= 1", name="ck_recommendation_exec_attempt_positive"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    # Link to the incident being targeted by the recommendation execution.
+    incident_id = Column(Integer, ForeignKey("incidents.id"), nullable=False, index=True)
+    # Recommendation text or identifier recorded at execution time.
+    recommendation = Column(String, nullable=False)
+
+    # Execution lifecycle fields
+    execution_status = Column(String, nullable=False)
+    execution_method = Column(String, nullable=True)
+    actor = Column(String, nullable=True)
+
+    # Retry support: attempt number within the incident's execution attempts.
+    attempt_number = Column(Integer, nullable=False, default=1)
+
+    # Lifecycle timestamps (nullable until the lifecycle event occurs)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    # Error information (nullable unless execution fails)
+    error_code = Column(String, nullable=True)
+    error_message = Column(String(1000), nullable=True)
+
+    # Outcome assessment (nullable until an outcome is recorded)
+    outcome_status = Column(String, nullable=True)
+    outcome_assessed_by = Column(String, nullable=True)
+    outcome_assessed_at = Column(DateTime, nullable=True)
+
+    # Relationship back to Incident
+    incident = relationship("Incident", backref="recommendation_executions")
