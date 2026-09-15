@@ -7,6 +7,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard/Dashboard'));
 const Predictions = lazy(() => import('./pages/Predictions/Predictions'));
 const Incidents = lazy(() => import('./pages/Incidents/Incidents'));
 const ServiceMap = lazy(() => import('./pages/ServiceMap/ServiceMap'));
+const Telemetry = lazy(() => import('./pages/Telemetry/Telemetry'));
 const AISimulator = lazy(() => import('./pages/AISimulator/AISimulator'));
 const Settings = lazy(() => import('./pages/Settings/Settings'));
 const Login = lazy(() => import('./pages/Auth/Login'));
@@ -103,6 +104,7 @@ function AppRoutes() {
           <Route path="/predictions" element={<Predictions />} />
           <Route path="/incidents" element={<Incidents />} />
           <Route path="/service-map" element={<ServiceMap />} />
+          <Route path="/telemetry" element={<Telemetry />} />
           <Route path="/ai-simulator" element={<AISimulator />} />
           <Route path="/settings" element={<Settings />} />
         </Route>

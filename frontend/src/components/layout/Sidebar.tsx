@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, TrendingUp, AlertTriangle, Map,
-  Cpu, Settings, ChevronRight
+  Cpu, Settings, ChevronRight, Activity
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -11,6 +11,7 @@ const navItems = [
   { name: 'Predictions',  icon: TrendingUp,       path: '/predictions',  hint: 'Failure forecasts' },
   { name: 'Incidents',    icon: AlertTriangle,    path: '/incidents',    hint: 'Active incidents' },
   { name: 'Service Map',  icon: Map,              path: '/service-map',  hint: 'Topology graph' },
+  { name: 'Telemetry',    icon: Activity,         path: '/telemetry',    hint: 'Local diagnostics' },
   { name: 'AI Simulator', icon: Cpu,              path: '/ai-simulator', hint: 'Scenario engine' },
 ];
 
