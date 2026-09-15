@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Activity,
@@ -10,7 +10,7 @@ import {
   Wifi,
   type LucideIcon,
 } from 'lucide-react';
-import { api, type SystemTelemetry } from '../../services/api';
+import type { SystemTelemetry } from '../../services/api';
 
 type TelemetrySection = {
   title: string;
@@ -118,33 +118,10 @@ function formatBootTime(value: string | null) {
 }
 
 export default function Telemetry() {
-  const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadTelemetry = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const data = await api.getSystemTelemetry(signal);
-      setTelemetry(data);
-    } catch (requestError) {
-      if (requestError instanceof Error && requestError.name === 'AbortError') {
-        return;
-      }
-      setTelemetry(null);
-      setError(requestError instanceof Error ? requestError.message : 'Unable to load local host telemetry.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void loadTelemetry(controller.signal);
-    return () => controller.abort();
-  }, [loadTelemetry]);
+  // Page is a UI-only shell for Phase 9A. No backend calls are made yet.
+  const [telemetry] = useState<SystemTelemetry | null>(null);
+  const [loading] = useState<boolean>(false);
+  const [error] = useState<string | null>(null);
 
   const systemFields = [
     { label: 'OS', value: telemetry?.os_name ?? 'Unavailable' },
@@ -210,16 +187,17 @@ export default function Telemetry() {
                     <div className="flex min-h-[110px] items-center justify-center text-xs text-text-muted">
                       Loading local system telemetry…
                     </div>
-                  ) : error ? (
+                        ) : error ? (
                     <div className="flex min-h-[110px] flex-col justify-center gap-3">
                       <p className="text-sm font-semibold text-white">Unable to load local telemetry</p>
                       <p className="text-xs leading-relaxed text-text-muted">{error}</p>
                       <button
                         type="button"
-                        onClick={() => void loadTelemetry()}
-                        className="inline-flex w-fit items-center rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] font-semibold text-primary hover:border-primary/50"
+                        disabled
+                        title="Telemetry backend not connected"
+                        className="inline-flex w-fit items-center rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] font-semibold text-primary/30 cursor-not-allowed"
                       >
-                        Retry
+                        Retry (awaiting backend)
                       </button>
                     </div>
                   ) : telemetry ? (

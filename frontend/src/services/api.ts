@@ -109,6 +109,7 @@ export const api = {
   getMetrics: (signal?: AbortSignal) => request<Metrics>('/metrics', {}, signal),
   getSystemStatus: (signal?: AbortSignal) => request<SystemStatus>('/system-status', {}, signal),
   getSystemTelemetry: (signal?: AbortSignal) => request<SystemTelemetry>('/telemetry/system', {}, signal),
+  getNetworkInterfaces: (signal?: AbortSignal) => request<NetworkInterface[]>('/telemetry/network', {}, signal),
   getMetricsMode: (signal?: AbortSignal) => request<{ mode: MetricsMode }>('/metrics/mode', {}, signal),
   setMetricsMode: (mode: MetricsMode, signal?: AbortSignal) => request<{ success: boolean; mode?: MetricsMode; message?: string }>(`/metrics/mode/${mode}`, { method: 'POST' }, signal),
   getDemoScenarios: (signal?: AbortSignal) => request<Record<string, DemoScenario>>('/demo/scenarios', {}, signal),
@@ -194,4 +195,25 @@ export interface SystemTelemetry {
   uptime_seconds: number | null;
   boot_time: string | null;
   collected_at: string | null;
+}
+
+export interface NetworkInterfaceAddress {
+  family: string | null;
+  address: string | null;
+  netmask: string | null;
+  broadcast: string | null;
+  ptp: string | null;
+}
+
+export interface NetworkInterface {
+  name: string;
+  is_up: boolean;
+  speed_mbps: number | null;
+  mtu: number | null;
+  addresses: NetworkInterfaceAddress[];
+  mac_address: string | null;
+  bytes_sent: number | null;
+  bytes_received: number | null;
+  packets_sent: number | null;
+  packets_received: number | null;
 }

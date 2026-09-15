@@ -85,6 +85,7 @@ export default function Navbar() {
           { name: 'Predictions',  path: '/predictions' },
           { name: 'Incidents',    path: '/incidents' },
           { name: 'Service Map',  path: '/service-map' },
+          { name: 'Telemetry',    path: '/telemetry' },
           { name: 'AI Simulator', path: '/ai-simulator' },
         ].map((item) => (
           <NavLink
