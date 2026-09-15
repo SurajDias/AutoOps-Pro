@@ -25,6 +25,7 @@ from app.utils.metrics_generator import metrics, update_metrics
 from app.routes import ml
 from app.routes import simulator
 from app.routes import system
+from app.routes import telemetry
 
 # Incident Management API
 from app.api.incident_api import router as incident_router
@@ -71,6 +72,7 @@ app.add_middleware(
 app.include_router(ml.router)
 app.include_router(system.router)
 app.include_router(simulator.router)
+app.include_router(telemetry.router)
 
 app.include_router(
     incident_router,

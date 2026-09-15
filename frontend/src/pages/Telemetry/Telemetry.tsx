@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Activity,
@@ -9,6 +10,7 @@ import {
   Wifi,
   type LucideIcon,
 } from 'lucide-react';
+import { api, type SystemTelemetry } from '../../services/api';
 
 type TelemetrySection = {
   title: string;
@@ -61,7 +63,102 @@ function EmptyTelemetryState() {
   );
 }
 
+function formatBytes(bytes: number | null) {
+  if (bytes == null) {
+    return 'Unavailable';
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const precision = value >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function formatUptime(seconds: number | null) {
+  if (seconds == null) {
+    return 'Unavailable';
+  }
+
+  const totalSeconds = Math.max(0, Math.floor(seconds));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  const parts = [
+    days > 0 ? `${days}d` : null,
+    hours > 0 ? `${hours}h` : null,
+    minutes > 0 ? `${minutes}m` : null,
+  ].filter((part): part is string => part !== null);
+
+  if (parts.length === 0) {
+    return `${totalSeconds}s`;
+  }
+
+  return parts.join(' ');
+}
+
+function formatBootTime(value: string | null) {
+  if (!value) {
+    return 'Unavailable';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Unavailable';
+  }
+
+  return parsed.toLocaleString();
+}
+
 export default function Telemetry() {
+  const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadTelemetry = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const data = await api.getSystemTelemetry(signal);
+      setTelemetry(data);
+    } catch (requestError) {
+      if (requestError instanceof Error && requestError.name === 'AbortError') {
+        return;
+      }
+      setTelemetry(null);
+      setError(requestError instanceof Error ? requestError.message : 'Unable to load local host telemetry.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadTelemetry(controller.signal);
+    return () => controller.abort();
+  }, [loadTelemetry]);
+
+  const systemFields = [
+    { label: 'OS', value: telemetry?.os_name ?? 'Unavailable' },
+    { label: 'Version / release', value: telemetry?.os_release ?? telemetry?.os_version ?? 'Unavailable' },
+    { label: 'Kernel', value: telemetry?.kernel_version ?? 'Unavailable' },
+    { label: 'Architecture', value: telemetry?.architecture ?? 'Unavailable' },
+    { label: 'Hostname', value: telemetry?.hostname ?? 'Unavailable' },
+    { label: 'CPU logical cores', value: telemetry?.cpu_logical_cores == null ? 'Unavailable' : String(telemetry.cpu_logical_cores) },
+    { label: 'Total memory', value: formatBytes(telemetry?.total_memory_bytes ?? null) },
+    { label: 'Available memory', value: formatBytes(telemetry?.available_memory_bytes ?? null) },
+    { label: 'Uptime', value: formatUptime(telemetry?.uptime_seconds ?? null) },
+    { label: 'Boot time', value: formatBootTime(telemetry?.boot_time ?? null) },
+  ];
+
   return (
     <div className="p-8 bg-background min-h-screen text-text-primary">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -78,7 +175,7 @@ export default function Telemetry() {
 
           <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/8 px-3 py-2 text-[11px] font-semibold text-primary">
             <Activity className="h-4 w-4" />
-            Collection pending
+            {loading ? 'Collection pending' : telemetry ? 'Local host data' : 'No local data'}
           </div>
         </div>
 
@@ -103,11 +200,52 @@ export default function Telemetry() {
                 </div>
 
                 <div className="rounded-full border border-white/[0.08] bg-elevated/50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-text-muted">
-                  Idle
+                  {title === 'System Overview' ? (loading ? 'Loading' : telemetry ? 'Live' : 'Idle') : 'Idle'}
                 </div>
               </div>
 
-              <EmptyTelemetryState />
+              {title === 'System Overview' ? (
+                <div className="mt-5 rounded-2xl border border-white/[0.08] bg-elevated/35 p-5 min-h-[140px]">
+                  {loading ? (
+                    <div className="flex min-h-[110px] items-center justify-center text-xs text-text-muted">
+                      Loading local system telemetry…
+                    </div>
+                  ) : error ? (
+                    <div className="flex min-h-[110px] flex-col justify-center gap-3">
+                      <p className="text-sm font-semibold text-white">Unable to load local telemetry</p>
+                      <p className="text-xs leading-relaxed text-text-muted">{error}</p>
+                      <button
+                        type="button"
+                        onClick={() => void loadTelemetry()}
+                        className="inline-flex w-fit items-center rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] font-semibold text-primary hover:border-primary/50"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : telemetry ? (
+                    <>
+                      <div className="flex items-center justify-between gap-4 border-b border-white/[0.08] pb-3">
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-text-muted">Local host</div>
+                        <div className="text-[10px] text-text-muted">
+                          Updated: {telemetry.collected_at ? new Date(telemetry.collected_at).toLocaleString() : 'Not yet available'}
+                        </div>
+                      </div>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        {systemFields.map(({ label, value }) => (
+                          <div key={label} className="rounded-xl border border-white/[0.06] bg-surface/50 p-3">
+                            <div className="text-[10px] uppercase tracking-[0.18em] text-text-muted">{label}</div>
+                            <div className="mt-2 text-sm font-medium text-white break-words">{value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <EmptyTelemetryState />
+                  )}
+                </div>
+              ) : (
+                <EmptyTelemetryState />
+              )}
             </motion.section>
           ))}
         </div>
@@ -120,7 +258,7 @@ export default function Telemetry() {
             <div>
               <p className="text-sm font-semibold text-white">Local telemetry shell ready</p>
               <p className="mt-1 text-xs leading-relaxed text-text-muted">
-                This interface is intentionally empty until the corresponding backend telemetry endpoints are available. No current values are displayed for system metrics, interfaces, ports, processes, or risk signals.
+                The System Overview section is populated from the local machine via the backend telemetry endpoint. The remaining sections are placeholders until their corresponding backend collectors are available.
               </p>
             </div>
           </div>

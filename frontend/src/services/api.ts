@@ -108,6 +108,7 @@ export function normalizeIncidentReport(response: IncidentReportResponse): Incid
 export const api = {
   getMetrics: (signal?: AbortSignal) => request<Metrics>('/metrics', {}, signal),
   getSystemStatus: (signal?: AbortSignal) => request<SystemStatus>('/system-status', {}, signal),
+  getSystemTelemetry: (signal?: AbortSignal) => request<SystemTelemetry>('/telemetry/system', {}, signal),
   getMetricsMode: (signal?: AbortSignal) => request<{ mode: MetricsMode }>('/metrics/mode', {}, signal),
   setMetricsMode: (mode: MetricsMode, signal?: AbortSignal) => request<{ success: boolean; mode?: MetricsMode; message?: string }>(`/metrics/mode/${mode}`, { method: 'POST' }, signal),
   getDemoScenarios: (signal?: AbortSignal) => request<Record<string, DemoScenario>>('/demo/scenarios', {}, signal),
@@ -178,4 +179,19 @@ export interface RecommendationOutcomeRequest {
 export interface RecommendationExecutionListResponse {
   incident_id: number;
   executions: RecommendationExecution[];
+}
+
+export interface SystemTelemetry {
+  os_name: string | null;
+  os_release: string | null;
+  os_version: string | null;
+  kernel_version: string | null;
+  architecture: string | null;
+  hostname: string | null;
+  cpu_logical_cores: number | null;
+  total_memory_bytes: number | null;
+  available_memory_bytes: number | null;
+  uptime_seconds: number | null;
+  boot_time: string | null;
+  collected_at: string | null;
 }
