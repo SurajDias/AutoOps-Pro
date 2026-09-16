@@ -53,3 +53,13 @@ class NetworkInterface(BaseModel):
     drops_received: Optional[int] = None
 
     model_config = ConfigDict(extra='forbid')
+
+
+class ListeningPort(BaseModel):
+    protocol: str
+    address_family: Optional[str] = None
+    local_address: Optional[str] = None
+    local_port: Optional[int] = None
+    status: Optional[str] = None
+
+    model_config = ConfigDict(extra='forbid')

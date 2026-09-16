@@ -139,6 +139,77 @@ def get_network_interfaces_telemetry() -> list[dict[str, Any]]:
     return payload
 
 
+def get_listening_ports_telemetry() -> list[dict[str, Any]]:
+    connections = _safe_call(lambda: psutil.net_connections(kind='inet')) or []
+    listening_ports: list[dict[str, Any]] = []
+    seen: set[tuple[str, str | None, str | None, int | None, str | None]] = set()
+
+    for connection in connections:
+        protocol = _connection_protocol(getattr(connection, 'type', None))
+        local_address, local_port = _connection_local_endpoint(getattr(connection, 'laddr', None))
+        address_family = _normalize_family_name(getattr(connection, 'family', None))
+        connection_status = _optional_string(getattr(connection, 'status', None))
+        has_remote_endpoint = bool(getattr(connection, 'raddr', None))
+
+        if protocol == 'TCP':
+            if connection_status != 'LISTEN':
+                continue
+        elif protocol == 'UDP':
+            # psutil represents bound UDP sockets with no remote endpoint and
+            # usually a status of NONE. Connected UDP sockets are excluded.
+            if has_remote_endpoint:
+                continue
+            connection_status = None if connection_status in {None, 'NONE'} else connection_status
+        else:
+            continue
+
+        if local_port is None:
+            continue
+
+        record_key = (protocol, address_family, local_address, local_port, connection_status)
+        if record_key in seen:
+            continue
+        seen.add(record_key)
+        listening_ports.append({
+            'protocol': protocol,
+            'address_family': address_family,
+            'local_address': local_address,
+            'local_port': local_port,
+            'status': connection_status,
+        })
+
+    return sorted(
+        listening_ports,
+        key=lambda item: (
+            item['protocol'],
+            item['address_family'] or '',
+            item['local_address'] or '',
+            item['local_port'] if item['local_port'] is not None else -1,
+        ),
+    )
+
+
+def _connection_protocol(connection_type: Any) -> str | None:
+    if connection_type == getattr(socket, 'SOCK_STREAM', None):
+        return 'TCP'
+    if connection_type == getattr(socket, 'SOCK_DGRAM', None):
+        return 'UDP'
+    return None
+
+
+def _connection_local_endpoint(local_endpoint: Any) -> tuple[str | None, int | None]:
+    if local_endpoint is None:
+        return None, None
+
+    address = getattr(local_endpoint, 'ip', None)
+    port = getattr(local_endpoint, 'port', None)
+    if address is None and isinstance(local_endpoint, tuple) and local_endpoint:
+        address = local_endpoint[0]
+    if port is None and isinstance(local_endpoint, tuple) and len(local_endpoint) > 1:
+        port = local_endpoint[1]
+    return _optional_string(address), _optional_int(port)
+
+
 def _optional_string(value: Any) -> str | None:
     return str(value) if value is not None else None
 

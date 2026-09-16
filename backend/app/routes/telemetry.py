@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException, status
 
-from app.schemas.telemetry import NetworkInterface, SystemTelemetry
+from app.schemas.telemetry import ListeningPort, NetworkInterface, SystemTelemetry
 from app.services.telemetry_service import (
+    get_listening_ports_telemetry,
     get_network_interfaces_telemetry,
     get_system_telemetry,
 )
@@ -45,6 +46,25 @@ async def get_local_network_interfaces() -> list[NetworkInterface]:
         )
 
     return [NetworkInterface(**interface_data) for interface_data in interfaces]
+
+
+@router.get("/listening-ports", response_model=list[ListeningPort])
+async def get_local_listening_ports() -> list[ListeningPort]:
+    try:
+        ports = get_listening_ports_telemetry()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to collect local listening ports telemetry.",
+        ) from exc
+
+    if ports is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to collect local listening ports telemetry.",
+        )
+
+    return [ListeningPort(**port_data) for port_data in ports]
 
 
 @router.get("/network", response_model=list[NetworkInterface])

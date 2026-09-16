@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -29,6 +30,10 @@ NETWORK_INTERFACE_FIELDS = {
     'name', 'is_up', 'speed_mbps', 'mtu', 'addresses', 'mac_address',
     'bytes_sent', 'bytes_received', 'packets_sent', 'packets_received',
     'errors_sent', 'errors_received', 'drops_sent', 'drops_received',
+}
+
+LISTENING_PORT_FIELDS = {
+    'protocol', 'address_family', 'local_address', 'local_port', 'status',
 }
 
 
@@ -344,3 +349,67 @@ def test_network_interface_service_returns_empty_results(monkeypatch):
     monkeypatch.setattr(telemetry_service.psutil, 'net_io_counters', lambda pernic: {})
 
     assert telemetry_service.get_network_interfaces_telemetry() == []
+
+
+def test_listening_ports_filters_tcp_and_udp_and_sorts_results(monkeypatch):
+    connections = [
+        SimpleNamespace(family=telemetry_service.socket.AF_INET6, type=telemetry_service.socket.SOCK_DGRAM, laddr=('::', 53), raddr=(), status='NONE', pid=42),
+        SimpleNamespace(family=telemetry_service.socket.AF_INET, type=telemetry_service.socket.SOCK_STREAM, laddr=('127.0.0.1', 8080), raddr=(), status='LISTEN', pid=99),
+        SimpleNamespace(family=telemetry_service.socket.AF_INET, type=telemetry_service.socket.SOCK_STREAM, laddr=('127.0.0.1', 50000), raddr=('192.0.2.2', 443), status='ESTABLISHED', pid=7),
+        SimpleNamespace(family=telemetry_service.socket.AF_INET, type=telemetry_service.socket.SOCK_DGRAM, laddr=('127.0.0.1', 9999), raddr=('192.0.2.2', 53), status='NONE', pid=8),
+        SimpleNamespace(family=telemetry_service.socket.AF_INET, type=telemetry_service.socket.SOCK_STREAM, laddr=('0.0.0.0', 443), raddr=(), status='LISTEN', pid=11),
+    ]
+    monkeypatch.setattr(telemetry_service.psutil, 'net_connections', lambda kind: connections)
+
+    payload = telemetry_service.get_listening_ports_telemetry()
+
+    assert payload == [
+        {'protocol': 'TCP', 'address_family': 'IPv4', 'local_address': '0.0.0.0', 'local_port': 443, 'status': 'LISTEN'},
+        {'protocol': 'TCP', 'address_family': 'IPv4', 'local_address': '127.0.0.1', 'local_port': 8080, 'status': 'LISTEN'},
+        {'protocol': 'UDP', 'address_family': 'IPv6', 'local_address': '::', 'local_port': 53, 'status': None},
+    ]
+
+
+def test_listening_ports_normalizes_missing_optional_values(monkeypatch):
+    monkeypatch.setattr(
+        telemetry_service.psutil,
+        'net_connections',
+        lambda kind: [SimpleNamespace(family=None, type=telemetry_service.socket.SOCK_STREAM, laddr=(None, 8080), raddr=(), status='LISTEN')],
+    )
+
+    assert telemetry_service.get_listening_ports_telemetry() == [{
+        'protocol': 'TCP',
+        'address_family': None,
+        'local_address': None,
+        'local_port': 8080,
+        'status': 'LISTEN',
+    }]
+
+
+def test_listening_ports_handles_access_denied_and_empty_results(monkeypatch):
+    def raise_access_denied(kind):
+        raise telemetry_service.psutil.AccessDenied()
+
+    monkeypatch.setattr(telemetry_service.psutil, 'net_connections', raise_access_denied)
+    assert telemetry_service.get_listening_ports_telemetry() == []
+
+    monkeypatch.setattr(telemetry_service.psutil, 'net_connections', lambda kind: [])
+    assert telemetry_service.get_listening_ports_telemetry() == []
+
+
+def test_listening_ports_endpoint_returns_safe_expected_shape(monkeypatch):
+    monkeypatch.setattr(
+        telemetry_route,
+        'get_listening_ports_telemetry',
+        lambda: [{'protocol': 'TCP', 'address_family': 'IPv4', 'local_address': '127.0.0.1', 'local_port': 3000, 'status': 'LISTEN'}],
+    )
+
+    ports = asyncio.run(telemetry_route.get_local_listening_ports())
+
+    assert len(ports) == 1
+    payload = ports[0].model_dump()
+    assert set(payload) == LISTENING_PORT_FIELDS
+    assert payload == {'protocol': 'TCP', 'address_family': 'IPv4', 'local_address': '127.0.0.1', 'local_port': 3000, 'status': 'LISTEN'}
+    payload_text = str(payload).lower()
+    for sensitive_label in ['pid', 'process', 'command', 'path', 'token', 'secret', 'password']:
+        assert sensitive_label not in payload_text

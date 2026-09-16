@@ -10,7 +10,7 @@ import {
   Wifi,
   type LucideIcon,
 } from 'lucide-react';
-import { api, type NetworkInterface, type SystemTelemetry } from '../../services/api';
+import { api, type ListeningPort, type NetworkInterface, type SystemTelemetry } from '../../services/api';
 
 type TelemetrySection = {
   title: string;
@@ -187,6 +187,65 @@ function NetworkInterfacesContent({
   );
 }
 
+function ListeningPortsContent({
+  ports,
+  loading,
+  error,
+  onRetry,
+}: {
+  ports: ListeningPort[] | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return <div className="flex min-h-[110px] items-center justify-center text-xs text-text-muted">Loading local listening ports…</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-[110px] flex-col justify-center gap-3">
+        <p className="text-sm font-semibold text-white">Unable to load listening ports</p>
+        <p className="text-xs leading-relaxed text-text-muted">{error}</p>
+        <button type="button" onClick={onRetry} className="inline-flex w-fit items-center rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/20">Retry</button>
+      </div>
+    );
+  }
+
+  if (!ports?.length) {
+    return (
+      <div className="flex min-h-[110px] flex-col justify-center">
+        <p className="text-sm font-semibold text-white">No listening sockets available</p>
+        <p className="mt-2 text-xs leading-relaxed text-text-muted">No local listening TCP or UDP sockets were reported by this machine.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-text-muted">Listening sockets detected on this machine.</p>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[560px] text-left text-xs">
+          <thead className="border-b border-white/[0.08] text-[10px] uppercase tracking-[0.14em] text-text-muted">
+            <tr><th className="pb-3 pr-4 font-medium">Protocol</th><th className="pb-3 pr-4 font-medium">Family</th><th className="pb-3 pr-4 font-medium">Local address</th><th className="pb-3 pr-4 font-medium">Port</th><th className="pb-3 font-medium">Status</th></tr>
+          </thead>
+          <tbody>
+            {ports.map((port) => (
+              <tr key={`${port.protocol}-${port.address_family}-${port.local_address}-${port.local_port}`} className="border-b border-white/[0.06] last:border-0">
+                <td className="py-3 pr-4"><span className={port.protocol === 'TCP' ? 'rounded-full border border-primary/30 bg-primary/10 px-2 py-1 font-semibold text-primary' : 'rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2 py-1 font-semibold text-cyan-300'}>{port.protocol}</span></td>
+                <td className="py-3 pr-4 text-text-muted">{port.address_family ?? '—'}</td>
+                <td className="py-3 pr-4 font-medium text-white">{port.local_address ?? '—'}</td>
+                <td className="py-3 pr-4 text-white">{port.local_port ?? '—'}</td>
+                <td className="py-3 text-text-muted">{port.status ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function Telemetry() {
   const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -194,6 +253,9 @@ export default function Telemetry() {
   const [networkInterfaces, setNetworkInterfaces] = useState<NetworkInterface[] | null>(null);
   const [networkLoading, setNetworkLoading] = useState<boolean>(true);
   const [networkError, setNetworkError] = useState<string | null>(null);
+  const [listeningPorts, setListeningPorts] = useState<ListeningPort[] | null>(null);
+  const [listeningPortsLoading, setListeningPortsLoading] = useState<boolean>(true);
+  const [listeningPortsError, setListeningPortsError] = useState<string | null>(null);
 
   const loadTelemetry = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -207,6 +269,20 @@ export default function Telemetry() {
       setError(err instanceof Error ? err.message : 'Unable to load local host telemetry.');
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const loadListeningPorts = useCallback(async (signal?: AbortSignal) => {
+    setListeningPortsLoading(true);
+    setListeningPortsError(null);
+    try {
+      setListeningPorts(await api.getListeningPorts(signal));
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      setListeningPorts(null);
+      setListeningPortsError(err instanceof Error ? err.message : 'Unable to load local listening ports.');
+    } finally {
+      setListeningPortsLoading(false);
     }
   }, []);
 
@@ -235,6 +311,12 @@ export default function Telemetry() {
     void loadNetworkInterfaces(controller.signal);
     return () => controller.abort();
   }, [loadNetworkInterfaces]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadListeningPorts(controller.signal);
+    return () => controller.abort();
+  }, [loadListeningPorts]);
 
   const systemFields = [
     { label: 'OS', value: telemetry?.os_name ?? 'Unavailable' },
@@ -293,7 +375,7 @@ export default function Telemetry() {
                 </div>
 
                 <div className="rounded-full border border-white/[0.08] bg-elevated/50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-text-muted">
-                  {title === 'System Overview' ? (loading ? 'Loading' : telemetry ? 'Live' : 'Idle') : title === 'Network Interfaces' ? (networkLoading ? 'Loading' : networkInterfaces ? 'Live' : 'Idle') : 'Idle'}
+                  {title === 'System Overview' ? (loading ? 'Loading' : telemetry ? 'Live' : 'Idle') : title === 'Network Interfaces' ? (networkLoading ? 'Loading' : networkInterfaces ? 'Live' : 'Idle') : title === 'Listening Ports' ? (listeningPortsLoading ? 'Loading' : listeningPorts ? 'Live' : 'Idle') : 'Idle'}
                 </div>
               </div>
 
@@ -340,6 +422,10 @@ export default function Telemetry() {
                 <div className="mt-5 rounded-2xl border border-white/[0.08] bg-elevated/35 p-5 min-h-[140px]">
                   <NetworkInterfacesContent interfaces={networkInterfaces} loading={networkLoading} error={networkError} onRetry={() => void loadNetworkInterfaces()} />
                 </div>
+              ) : title === 'Listening Ports' ? (
+                <div className="mt-5 rounded-2xl border border-white/[0.08] bg-elevated/35 p-5 min-h-[140px]">
+                  <ListeningPortsContent ports={listeningPorts} loading={listeningPortsLoading} error={listeningPortsError} onRetry={() => void loadListeningPorts()} />
+                </div>
               ) : (
                 <EmptyTelemetryState />
               )}
@@ -355,7 +441,7 @@ export default function Telemetry() {
             <div>
               <p className="text-sm font-semibold text-white">Local telemetry shell ready</p>
               <p className="mt-1 text-xs leading-relaxed text-text-muted">
-                System Overview and Network Interfaces are populated from this machine via local backend telemetry endpoints. The remaining sections are placeholders until their corresponding backend collectors are available.
+                System Overview, Network Interfaces, and Listening Ports are populated from this machine via local backend telemetry endpoints. The remaining sections are placeholders until their corresponding backend collectors are available.
               </p>
             </div>
           </div>

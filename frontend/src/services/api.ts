@@ -110,6 +110,7 @@ export const api = {
   getSystemStatus: (signal?: AbortSignal) => request<SystemStatus>('/system-status', {}, signal),
   getSystemTelemetry: (signal?: AbortSignal) => request<SystemTelemetry>('/telemetry/system', {}, signal),
   getNetworkInterfaces: (signal?: AbortSignal) => request<NetworkInterface[]>('/telemetry/network-interfaces', {}, signal),
+  getListeningPorts: (signal?: AbortSignal) => request<ListeningPort[]>('/telemetry/listening-ports', {}, signal),
   getMetricsMode: (signal?: AbortSignal) => request<{ mode: MetricsMode }>('/metrics/mode', {}, signal),
   setMetricsMode: (mode: MetricsMode, signal?: AbortSignal) => request<{ success: boolean; mode?: MetricsMode; message?: string }>(`/metrics/mode/${mode}`, { method: 'POST' }, signal),
   getDemoScenarios: (signal?: AbortSignal) => request<Record<string, DemoScenario>>('/demo/scenarios', {}, signal),
@@ -223,4 +224,12 @@ export interface NetworkInterface {
   errors_received: number | null;
   drops_sent: number | null;
   drops_received: number | null;
+}
+
+export interface ListeningPort {
+  protocol: 'TCP' | 'UDP';
+  address_family: string | null;
+  local_address: string | null;
+  local_port: number | null;
+  status: string | null;
 }
