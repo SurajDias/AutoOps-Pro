@@ -111,6 +111,7 @@ export const api = {
   getSystemTelemetry: (signal?: AbortSignal) => request<SystemTelemetry>('/telemetry/system', {}, signal),
   getNetworkInterfaces: (signal?: AbortSignal) => request<NetworkInterface[]>('/telemetry/network-interfaces', {}, signal),
   getListeningPorts: (signal?: AbortSignal) => request<ListeningPort[]>('/telemetry/listening-ports', {}, signal),
+  getProcesses: (signal?: AbortSignal) => request<ProcessTelemetry[]>('/telemetry/processes', {}, signal),
   getMetricsMode: (signal?: AbortSignal) => request<{ mode: MetricsMode }>('/metrics/mode', {}, signal),
   setMetricsMode: (mode: MetricsMode, signal?: AbortSignal) => request<{ success: boolean; mode?: MetricsMode; message?: string }>(`/metrics/mode/${mode}`, { method: 'POST' }, signal),
   getDemoScenarios: (signal?: AbortSignal) => request<Record<string, DemoScenario>>('/demo/scenarios', {}, signal),
@@ -232,4 +233,16 @@ export interface ListeningPort {
   local_address: string | null;
   local_port: number | null;
   status: string | null;
+}
+
+export interface ProcessTelemetry {
+  pid: number;
+  name: string | null;
+  status: string | null;
+  username: string | null;
+  cpu_percent: number | null;
+  memory_percent: number | null;
+  memory_rss_bytes: number | null;
+  thread_count: number | null;
+  creation_time: string | null;
 }

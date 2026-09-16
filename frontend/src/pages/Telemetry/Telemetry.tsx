@@ -10,7 +10,7 @@ import {
   Wifi,
   type LucideIcon,
 } from 'lucide-react';
-import { api, type ListeningPort, type NetworkInterface, type SystemTelemetry } from '../../services/api';
+import { api, type ListeningPort, type NetworkInterface, type ProcessTelemetry, type SystemTelemetry } from '../../services/api';
 
 type TelemetrySection = {
   title: string;
@@ -123,6 +123,10 @@ function formatNetworkBytes(bytes: number | null) {
 
 function formatCount(value: number | null) {
   return value == null ? '—' : value.toLocaleString();
+}
+
+function formatPercentage(value: number | null) {
+  return value == null ? '—' : `${value.toFixed(1)}%`;
 }
 
 function NetworkInterfacesContent({
@@ -246,6 +250,68 @@ function ListeningPortsContent({
   );
 }
 
+function ProcessesContent({
+  processes,
+  loading,
+  error,
+  onRetry,
+}: {
+  processes: ProcessTelemetry[] | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return <div className="flex min-h-[110px] items-center justify-center text-xs text-text-muted">Loading local processes…</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-[110px] flex-col justify-center gap-3">
+        <p className="text-sm font-semibold text-white">Unable to load processes</p>
+        <p className="text-xs leading-relaxed text-text-muted">{error}</p>
+        <button type="button" onClick={onRetry} className="inline-flex w-fit items-center rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/20">Retry</button>
+      </div>
+    );
+  }
+
+  if (!processes?.length) {
+    return (
+      <div className="flex min-h-[110px] flex-col justify-center">
+        <p className="text-sm font-semibold text-white">No processes available</p>
+        <p className="mt-2 text-xs leading-relaxed text-text-muted">No local processes were reported by this machine.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-text-muted">Processes detected on this machine.</p>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[820px] text-left text-xs">
+          <thead className="border-b border-white/[0.08] text-[10px] uppercase tracking-[0.14em] text-text-muted">
+            <tr><th className="pb-3 pr-4 font-medium">PID</th><th className="pb-3 pr-4 font-medium">Process name</th><th className="pb-3 pr-4 font-medium">Status</th><th className="pb-3 pr-4 font-medium">CPU</th><th className="pb-3 pr-4 font-medium">Memory</th><th className="pb-3 pr-4 font-medium">RSS</th><th className="pb-3 pr-4 font-medium">Threads</th><th className="pb-3 font-medium">Creation time</th></tr>
+          </thead>
+          <tbody>
+            {processes.map((process) => (
+              <tr key={process.pid} className="border-b border-white/[0.06] align-top last:border-0">
+                <td className="py-3 pr-4 font-medium text-white">{formatCount(process.pid)}</td>
+                <td className="py-3 pr-4 font-semibold text-white">{process.name ?? '—'}</td>
+                <td className="py-3 pr-4 text-text-muted">{process.status ?? '—'}</td>
+                <td className="py-3 pr-4 text-text-muted">{formatPercentage(process.cpu_percent)}</td>
+                <td className="py-3 pr-4 text-text-muted">{formatPercentage(process.memory_percent)}</td>
+                <td className="py-3 pr-4 text-text-muted">{process.memory_rss_bytes == null ? '—' : formatBytes(process.memory_rss_bytes)}</td>
+                <td className="py-3 pr-4 text-text-muted">{formatCount(process.thread_count)}</td>
+                <td className="py-3 text-text-muted">{process.creation_time == null ? '—' : formatBootTime(process.creation_time)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function Telemetry() {
   const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -256,6 +322,9 @@ export default function Telemetry() {
   const [listeningPorts, setListeningPorts] = useState<ListeningPort[] | null>(null);
   const [listeningPortsLoading, setListeningPortsLoading] = useState<boolean>(true);
   const [listeningPortsError, setListeningPortsError] = useState<string | null>(null);
+  const [processes, setProcesses] = useState<ProcessTelemetry[] | null>(null);
+  const [processesLoading, setProcessesLoading] = useState<boolean>(true);
+  const [processesError, setProcessesError] = useState<string | null>(null);
 
   const loadTelemetry = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -300,6 +369,20 @@ export default function Telemetry() {
     }
   }, []);
 
+  const loadProcesses = useCallback(async (signal?: AbortSignal) => {
+    setProcessesLoading(true);
+    setProcessesError(null);
+    try {
+      setProcesses(await api.getProcesses(signal));
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      setProcesses(null);
+      setProcessesError(err instanceof Error ? err.message : 'Unable to load local processes.');
+    } finally {
+      setProcessesLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     void loadTelemetry(controller.signal);
@@ -317,6 +400,12 @@ export default function Telemetry() {
     void loadListeningPorts(controller.signal);
     return () => controller.abort();
   }, [loadListeningPorts]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadProcesses(controller.signal);
+    return () => controller.abort();
+  }, [loadProcesses]);
 
   const systemFields = [
     { label: 'OS', value: telemetry?.os_name ?? 'Unavailable' },
@@ -375,7 +464,7 @@ export default function Telemetry() {
                 </div>
 
                 <div className="rounded-full border border-white/[0.08] bg-elevated/50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-text-muted">
-                  {title === 'System Overview' ? (loading ? 'Loading' : telemetry ? 'Live' : 'Idle') : title === 'Network Interfaces' ? (networkLoading ? 'Loading' : networkInterfaces ? 'Live' : 'Idle') : title === 'Listening Ports' ? (listeningPortsLoading ? 'Loading' : listeningPorts ? 'Live' : 'Idle') : 'Idle'}
+                  {title === 'System Overview' ? (loading ? 'Loading' : telemetry ? 'Live' : 'Idle') : title === 'Network Interfaces' ? (networkLoading ? 'Loading' : networkInterfaces ? 'Live' : 'Idle') : title === 'Listening Ports' ? (listeningPortsLoading ? 'Loading' : listeningPorts ? 'Live' : 'Idle') : title === 'Processes' ? (processesLoading ? 'Loading' : processes ? 'Live' : 'Idle') : 'Idle'}
                 </div>
               </div>
 
@@ -425,6 +514,10 @@ export default function Telemetry() {
               ) : title === 'Listening Ports' ? (
                 <div className="mt-5 rounded-2xl border border-white/[0.08] bg-elevated/35 p-5 min-h-[140px]">
                   <ListeningPortsContent ports={listeningPorts} loading={listeningPortsLoading} error={listeningPortsError} onRetry={() => void loadListeningPorts()} />
+                </div>
+              ) : title === 'Processes' ? (
+                <div className="mt-5 rounded-2xl border border-white/[0.08] bg-elevated/35 p-5 min-h-[140px]">
+                  <ProcessesContent processes={processes} loading={processesLoading} error={processesError} onRetry={() => void loadProcesses()} />
                 </div>
               ) : (
                 <EmptyTelemetryState />

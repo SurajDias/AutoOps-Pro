@@ -10,6 +10,9 @@ from typing import Any, Callable
 import psutil
 
 
+MAX_PROCESSES = 100
+
+
 def _safe_call(callback: Callable[[], Any]) -> Any:
     try:
         return callback()
@@ -189,6 +192,46 @@ def get_listening_ports_telemetry() -> list[dict[str, Any]]:
     )
 
 
+def get_processes_telemetry() -> list[dict[str, Any]]:
+    """Return bounded, non-sensitive telemetry for locally running processes."""
+    processes = _safe_call(lambda: psutil.process_iter()) or []
+    normalized: list[dict[str, Any]] = []
+
+    for process in processes:
+        pid = _optional_int(_safe_process_call(process, 'pid'))
+        if pid is None:
+            continue
+
+        creation_epoch = _optional_float(_safe_process_call(process, 'create_time'))
+        creation_time = None
+        if creation_epoch is not None:
+            try:
+                creation_time = datetime.fromtimestamp(creation_epoch, tz=timezone.utc).isoformat()
+            except (OverflowError, OSError, ValueError):
+                creation_time = None
+
+        memory_info = _safe_process_call(process, 'memory_info')
+        normalized.append({
+            'pid': pid,
+            'name': _optional_string(_safe_process_call(process, 'name')),
+            'status': _optional_string(_safe_process_call(process, 'status')),
+            'username': _optional_string(_safe_process_call(process, 'username')),
+            'cpu_percent': _optional_float(_safe_process_call(process, 'cpu_percent')),
+            'memory_percent': _optional_float(_safe_process_call(process, 'memory_percent')),
+            'memory_rss_bytes': _optional_int(getattr(memory_info, 'rss', None)),
+            'thread_count': _optional_int(_safe_process_call(process, 'num_threads')),
+            'creation_time': creation_time,
+        })
+
+    normalized.sort(key=lambda item: (
+        -(item['cpu_percent']) if item['cpu_percent'] is not None else float('inf'),
+        -(item['memory_percent']) if item['memory_percent'] is not None else float('inf'),
+        (item['name'] or '').casefold(),
+        item['pid'],
+    ))
+    return normalized[:MAX_PROCESSES]
+
+
 def _connection_protocol(connection_type: Any) -> str | None:
     if connection_type == getattr(socket, 'SOCK_STREAM', None):
         return 'TCP'
@@ -212,6 +255,16 @@ def _connection_local_endpoint(local_endpoint: Any) -> tuple[str | None, int | N
 
 def _optional_string(value: Any) -> str | None:
     return str(value) if value is not None else None
+
+
+def _safe_process_call(process: Any, attribute: str) -> Any:
+    try:
+        value = getattr(process, attribute)
+        return value() if callable(value) else value
+    except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, AttributeError, OSError):
+        return None
+    except Exception:
+        return None
 
 
 def _normalize_family_name(family: int | str | None) -> str | None:

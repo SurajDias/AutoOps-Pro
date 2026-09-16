@@ -63,3 +63,17 @@ class ListeningPort(BaseModel):
     status: Optional[str] = None
 
     model_config = ConfigDict(extra='forbid')
+
+
+class ProcessTelemetry(BaseModel):
+    pid: int
+    name: Optional[str] = None
+    status: Optional[str] = None
+    username: Optional[str] = None
+    cpu_percent: Optional[float] = None
+    memory_percent: Optional[float] = None
+    memory_rss_bytes: Optional[int] = None
+    thread_count: Optional[int] = None
+    creation_time: Optional[str] = None
+
+    model_config = ConfigDict(extra='forbid')

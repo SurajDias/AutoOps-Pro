@@ -36,6 +36,11 @@ LISTENING_PORT_FIELDS = {
     'protocol', 'address_family', 'local_address', 'local_port', 'status',
 }
 
+PROCESS_FIELDS = {
+    'pid', 'name', 'status', 'username', 'cpu_percent', 'memory_percent',
+    'memory_rss_bytes', 'thread_count', 'creation_time',
+}
+
 
 def test_get_system_telemetry_returns_expected_shape():
     with TestClient(app) as client:
@@ -413,3 +418,140 @@ def test_listening_ports_endpoint_returns_safe_expected_shape(monkeypatch):
     payload_text = str(payload).lower()
     for sensitive_label in ['pid', 'process', 'command', 'path', 'token', 'secret', 'password']:
         assert sensitive_label not in payload_text
+
+
+class FakeProcess:
+    def __init__(self, pid, name='worker', status='running', username='operator', cpu=0.0, memory=0.0, rss=1024, threads=1, created=1_700_000_000):
+        self.pid = pid
+        self._name = name
+        self._status = status
+        self._username = username
+        self._cpu = cpu
+        self._memory = memory
+        self._rss = rss
+        self._threads = threads
+        self._created = created
+
+    def name(self):
+        return self._name
+
+    def status(self):
+        return self._status
+
+    def username(self):
+        return self._username
+
+    def cpu_percent(self):
+        return self._cpu
+
+    def memory_percent(self):
+        return self._memory
+
+    def memory_info(self):
+        return SimpleNamespace(rss=self._rss)
+
+    def num_threads(self):
+        return self._threads
+
+    def create_time(self):
+        return self._created
+
+
+def test_processes_endpoint_returns_safe_expected_shape(monkeypatch):
+    monkeypatch.setattr(
+        telemetry_route,
+        'get_processes_telemetry',
+        lambda: [telemetry_service.get_processes_telemetry()[0]],
+    )
+    monkeypatch.setattr(telemetry_service.psutil, 'process_iter', lambda: [FakeProcess(42)])
+
+    with TestClient(app) as client:
+        response = client.get('/telemetry/processes')
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert set(payload[0]) == PROCESS_FIELDS
+    assert payload[0]['pid'] == 42
+    assert payload[0]['name'] == 'worker'
+    assert payload[0]['memory_rss_bytes'] == 1024
+    assert isinstance(payload[0]['creation_time'], str)
+
+
+def test_processes_normalize_missing_optional_values(monkeypatch):
+    class MissingProcess(FakeProcess):
+        def username(self):
+            raise telemetry_service.psutil.AccessDenied()
+
+        def memory_info(self):
+            raise telemetry_service.psutil.NoSuchProcess(self.pid)
+
+        def cpu_percent(self):
+            raise telemetry_service.psutil.ZombieProcess(self.pid)
+
+        def memory_percent(self):
+            return None
+
+        def num_threads(self):
+            raise AttributeError('unsupported')
+
+        def create_time(self):
+            return None
+
+    monkeypatch.setattr(telemetry_service.psutil, 'process_iter', lambda: [MissingProcess(7)])
+
+    assert telemetry_service.get_processes_telemetry() == [{
+        'pid': 7,
+        'name': 'worker',
+        'status': 'running',
+        'username': None,
+        'cpu_percent': None,
+        'memory_percent': None,
+        'memory_rss_bytes': None,
+        'thread_count': None,
+        'creation_time': None,
+    }]
+
+
+def test_processes_skip_inaccessible_processes_without_failing(monkeypatch):
+    class InaccessibleProcess:
+        @property
+        def pid(self):
+            raise telemetry_service.psutil.NoSuchProcess(99)
+
+    monkeypatch.setattr(telemetry_service.psutil, 'process_iter', lambda: [InaccessibleProcess(), FakeProcess(2)])
+
+    payload = telemetry_service.get_processes_telemetry()
+
+    assert [process['pid'] for process in payload] == [2]
+
+
+def test_processes_sort_deterministically_and_limit_response(monkeypatch):
+    processes = [
+        FakeProcess(3, name='beta', cpu=20, memory=1),
+        FakeProcess(2, name='alpha', cpu=20, memory=1),
+        FakeProcess(1, name='zeta', cpu=None, memory=None),
+    ] + [FakeProcess(pid, name=f'worker-{pid}', cpu=0) for pid in range(4, 105)]
+    monkeypatch.setattr(telemetry_service.psutil, 'process_iter', lambda: processes)
+
+    payload = telemetry_service.get_processes_telemetry()
+
+    assert len(payload) == telemetry_service.MAX_PROCESSES
+    assert [process['pid'] for process in payload[:2]] == [2, 3]
+    assert all(process['pid'] != 1 for process in payload)
+
+
+def test_processes_do_not_expose_sensitive_data(monkeypatch):
+    monkeypatch.setattr(telemetry_service.psutil, 'process_iter', lambda: [FakeProcess(1, name='safe-service')])
+
+    payload = telemetry_service.get_processes_telemetry()
+    payload_text = str(payload).lower()
+    assert set(payload[0]) == PROCESS_FIELDS
+    for sensitive_label in ['cmdline', 'exe', 'environ', 'open_files', 'connections', 'token', 'secret', 'password', 'path']:
+        assert sensitive_label not in payload_text
+
+
+def test_processes_return_empty_list(monkeypatch):
+    monkeypatch.setattr(telemetry_service.psutil, 'process_iter', lambda: [])
+
+    assert telemetry_service.get_processes_telemetry() == []
