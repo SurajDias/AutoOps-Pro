@@ -10,7 +10,7 @@ import {
   Wifi,
   type LucideIcon,
 } from 'lucide-react';
-import { api, type SystemTelemetry } from '../../services/api';
+import { api, type NetworkInterface, type SystemTelemetry } from '../../services/api';
 
 type TelemetrySection = {
   title: string;
@@ -117,10 +117,83 @@ function formatBootTime(value: string | null) {
   return parsed.toLocaleString();
 }
 
+function formatNetworkBytes(bytes: number | null) {
+  return bytes == null ? '—' : formatBytes(bytes);
+}
+
+function formatCount(value: number | null) {
+  return value == null ? '—' : value.toLocaleString();
+}
+
+function NetworkInterfacesContent({
+  interfaces,
+  loading,
+  error,
+  onRetry,
+}: {
+  interfaces: NetworkInterface[] | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return <div className="flex min-h-[110px] items-center justify-center text-xs text-text-muted">Loading local network interfaces…</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-[110px] flex-col justify-center gap-3">
+        <p className="text-sm font-semibold text-white">Unable to load network interfaces</p>
+        <p className="text-xs leading-relaxed text-text-muted">{error}</p>
+        <button type="button" onClick={onRetry} className="inline-flex w-fit items-center rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/20">Retry</button>
+      </div>
+    );
+  }
+
+  if (!interfaces?.length) {
+    return (
+      <div className="flex min-h-[110px] flex-col justify-center">
+        <p className="text-sm font-semibold text-white">No network interfaces available</p>
+        <p className="mt-2 text-xs leading-relaxed text-text-muted">No local network interfaces were reported by this machine.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-text-muted">Network interfaces detected on this machine.</p>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[700px] text-left text-xs">
+          <thead className="border-b border-white/[0.08] text-[10px] uppercase tracking-[0.14em] text-text-muted">
+            <tr><th className="pb-3 pr-4 font-medium">Interface</th><th className="pb-3 pr-4 font-medium">Status & addresses</th><th className="pb-3 pr-4 font-medium">Traffic</th><th className="pb-3 font-medium">Packets / errors</th></tr>
+          </thead>
+          <tbody>
+            {interfaces.map((networkInterface) => {
+              const addresses = networkInterface.addresses.filter(({ family }) => family !== 'MAC');
+              const hasErrorsOrDrops = [networkInterface.errors_sent, networkInterface.errors_received, networkInterface.drops_sent, networkInterface.drops_received].some((value) => value != null);
+              return (
+                <tr key={networkInterface.name} className="border-b border-white/[0.06] align-top last:border-0">
+                  <td className="py-3 pr-4"><p className="font-semibold text-white">{networkInterface.name}</p><p className="mt-1 text-text-muted">MAC: {networkInterface.mac_address ?? '—'}</p></td>
+                  <td className="py-3 pr-4"><p className={networkInterface.is_up === true ? 'text-emerald-300' : networkInterface.is_up === false ? 'text-rose-300' : 'text-text-muted'}>{networkInterface.is_up === true ? 'Up' : networkInterface.is_up === false ? 'Down' : '—'}</p><div className="mt-1 space-y-1 text-text-muted">{addresses.length ? addresses.map((address, index) => <p key={`${address.family}-${address.address}-${index}`}>{address.family ?? 'Address'}: {address.address ?? '—'}{address.netmask ? ` / ${address.netmask}` : ''}{address.broadcast ? ` · broadcast ${address.broadcast}` : ''}</p>) : <p>Addresses: —</p>}</div></td>
+                  <td className="py-3 pr-4 text-text-muted"><p>Sent: <span className="text-white">{formatNetworkBytes(networkInterface.bytes_sent)}</span></p><p className="mt-1">Received: <span className="text-white">{formatNetworkBytes(networkInterface.bytes_received)}</span></p></td>
+                  <td className="py-3 text-text-muted"><p>Sent / received: <span className="text-white">{formatCount(networkInterface.packets_sent)} / {formatCount(networkInterface.packets_received)}</span></p>{hasErrorsOrDrops && <p className="mt-1">Errors S/R: <span className="text-white">{formatCount(networkInterface.errors_sent)} / {formatCount(networkInterface.errors_received)}</span> · Drops S/R: <span className="text-white">{formatCount(networkInterface.drops_sent)} / {formatCount(networkInterface.drops_received)}</span></p>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function Telemetry() {
   const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [networkInterfaces, setNetworkInterfaces] = useState<NetworkInterface[] | null>(null);
+  const [networkLoading, setNetworkLoading] = useState<boolean>(true);
+  const [networkError, setNetworkError] = useState<string | null>(null);
 
   const loadTelemetry = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -137,11 +210,31 @@ export default function Telemetry() {
     }
   }, []);
 
+  const loadNetworkInterfaces = useCallback(async (signal?: AbortSignal) => {
+    setNetworkLoading(true);
+    setNetworkError(null);
+    try {
+      setNetworkInterfaces(await api.getNetworkInterfaces(signal));
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      setNetworkInterfaces(null);
+      setNetworkError(err instanceof Error ? err.message : 'Unable to load local network interfaces.');
+    } finally {
+      setNetworkLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     void loadTelemetry(controller.signal);
     return () => controller.abort();
   }, [loadTelemetry]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadNetworkInterfaces(controller.signal);
+    return () => controller.abort();
+  }, [loadNetworkInterfaces]);
 
   const systemFields = [
     { label: 'OS', value: telemetry?.os_name ?? 'Unavailable' },
@@ -200,7 +293,7 @@ export default function Telemetry() {
                 </div>
 
                 <div className="rounded-full border border-white/[0.08] bg-elevated/50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-text-muted">
-                  {title === 'System Overview' ? (loading ? 'Loading' : telemetry ? 'Live' : 'Idle') : 'Idle'}
+                  {title === 'System Overview' ? (loading ? 'Loading' : telemetry ? 'Live' : 'Idle') : title === 'Network Interfaces' ? (networkLoading ? 'Loading' : networkInterfaces ? 'Live' : 'Idle') : 'Idle'}
                 </div>
               </div>
 
@@ -243,6 +336,10 @@ export default function Telemetry() {
                     <EmptyTelemetryState />
                   )}
                 </div>
+              ) : title === 'Network Interfaces' ? (
+                <div className="mt-5 rounded-2xl border border-white/[0.08] bg-elevated/35 p-5 min-h-[140px]">
+                  <NetworkInterfacesContent interfaces={networkInterfaces} loading={networkLoading} error={networkError} onRetry={() => void loadNetworkInterfaces()} />
+                </div>
               ) : (
                 <EmptyTelemetryState />
               )}
@@ -258,7 +355,7 @@ export default function Telemetry() {
             <div>
               <p className="text-sm font-semibold text-white">Local telemetry shell ready</p>
               <p className="mt-1 text-xs leading-relaxed text-text-muted">
-                The System Overview section is populated from the local machine via the backend telemetry endpoint. The remaining sections are placeholders until their corresponding backend collectors are available.
+                System Overview and Network Interfaces are populated from this machine via local backend telemetry endpoints. The remaining sections are placeholders until their corresponding backend collectors are available.
               </p>
             </div>
           </div>

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -21,6 +23,12 @@ EXPECTED_FIELDS = {
     'uptime_seconds',
     'boot_time',
     'collected_at',
+}
+
+NETWORK_INTERFACE_FIELDS = {
+    'name', 'is_up', 'speed_mbps', 'mtu', 'addresses', 'mac_address',
+    'bytes_sent', 'bytes_received', 'packets_sent', 'packets_received',
+    'errors_sent', 'errors_received', 'drops_sent', 'drops_received',
 }
 
 
@@ -109,6 +117,7 @@ def test_get_network_telemetry_returns_expected_shape():
     assert isinstance(payload, list)
     if payload:
         interface = payload[0]
+        assert set(interface) == NETWORK_INTERFACE_FIELDS
         assert isinstance(interface['name'], str)
         assert isinstance(interface['is_up'], bool)
         assert isinstance(interface['addresses'], list)
@@ -159,3 +168,179 @@ def test_get_network_telemetry_does_not_expose_sensitive_data():
     payload_text = str(payload).lower()
     for secret_label in ['path', 'home', 'token', 'secret', 'api_key', 'password', 'command', 'process']:
         assert secret_label not in payload_text
+
+
+def test_get_network_interfaces_returns_expected_shape():
+    with TestClient(app) as client:
+        response = client.get('/telemetry/network-interfaces')
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list)
+    if payload:
+        interface = payload[0]
+        assert set(interface) == NETWORK_INTERFACE_FIELDS
+        assert isinstance(interface['name'], str)
+        assert interface['is_up'] is None or isinstance(interface['is_up'], bool)
+        assert isinstance(interface['addresses'], list)
+        for address in interface['addresses']:
+            assert isinstance(address, dict)
+            assert 'family' in address
+            assert 'address' in address
+
+
+def test_get_network_interfaces_handles_missing_optional_values(monkeypatch):
+    monkeypatch.setattr(
+        'app.routes.telemetry.get_network_interfaces_telemetry',
+        lambda: [{
+            'name': 'eth0',
+            'is_up': True,
+            'speed_mbps': None,
+            'mtu': None,
+            'addresses': [{
+                'family': 'IPv4',
+                'address': '10.0.0.2',
+                'netmask': None,
+                'broadcast': None,
+                'ptp': None,
+            }],
+            'mac_address': None,
+            'bytes_sent': None,
+            'bytes_received': None,
+            'packets_sent': None,
+            'packets_received': None,
+        }],
+    )
+
+    with TestClient(app) as client:
+        response = client.get('/telemetry/network-interfaces')
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]['speed_mbps'] is None
+    assert payload[0]['mac_address'] is None
+    assert payload[0]['addresses'][0]['netmask'] is None
+    assert payload[0]['bytes_sent'] is None
+    assert payload[0]['errors_sent'] is None
+    assert payload[0]['drops_received'] is None
+
+
+def test_get_network_interfaces_multiple_interfaces(monkeypatch):
+    monkeypatch.setattr(
+        'app.routes.telemetry.get_network_interfaces_telemetry',
+        lambda: [
+            {
+                'name': 'eth0',
+                'is_up': True,
+                'speed_mbps': 1000,
+                'mtu': 1500,
+                'addresses': [{
+                    'family': 'IPv4',
+                    'address': '192.168.1.100',
+                    'netmask': '255.255.255.0',
+                    'broadcast': '192.168.1.255',
+                    'ptp': None,
+                }],
+                'mac_address': '00:11:22:33:44:55',
+                'bytes_sent': 1000000,
+                'bytes_received': 2000000,
+                'packets_sent': 10000,
+                'packets_received': 20000,
+            },
+            {
+                'name': 'lo',
+                'is_up': True,
+                'speed_mbps': None,
+                'mtu': 65536,
+                'addresses': [{
+                    'family': 'IPv4',
+                    'address': '127.0.0.1',
+                    'netmask': '255.0.0.0',
+                    'broadcast': None,
+                    'ptp': None,
+                }],
+                'mac_address': None,
+                'bytes_sent': 50000,
+                'bytes_received': 50000,
+                'packets_sent': 500,
+                'packets_received': 500,
+            },
+        ],
+    )
+
+    with TestClient(app) as client:
+        response = client.get('/telemetry/network-interfaces')
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 2
+    assert payload[0]['name'] == 'eth0'
+    assert payload[0]['is_up'] is True
+    assert payload[0]['mac_address'] == '00:11:22:33:44:55'
+    assert payload[1]['name'] == 'lo'
+    assert payload[1]['mac_address'] is None
+
+
+def test_get_network_interfaces_does_not_expose_sensitive_data():
+    with TestClient(app) as client:
+        payload = client.get('/telemetry/network-interfaces').json()
+
+    payload_text = str(payload).lower()
+    for secret_label in ['path', 'home', 'token', 'secret', 'api_key', 'password', 'command', 'process']:
+        assert secret_label not in payload_text
+
+
+def test_get_network_interfaces_returns_empty_list(monkeypatch):
+    monkeypatch.setattr('app.routes.telemetry.get_network_interfaces_telemetry', lambda: [])
+
+    with TestClient(app) as client:
+        response = client.get('/telemetry/network-interfaces')
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_network_interface_service_handles_missing_statistics(monkeypatch):
+    ipv4 = SimpleNamespace(
+        family=telemetry_service.socket.AF_INET,
+        address='192.0.2.10',
+        netmask=None,
+        broadcast=None,
+        ptp=None,
+    )
+    monkeypatch.setattr(telemetry_service.psutil, 'net_if_addrs', lambda: {'adapter-1': [ipv4]})
+    monkeypatch.setattr(telemetry_service.psutil, 'net_if_stats', lambda: {})
+    monkeypatch.setattr(telemetry_service.psutil, 'net_io_counters', lambda pernic: {})
+
+    payload = telemetry_service.get_network_interfaces_telemetry()
+
+    assert payload == [{
+        'name': 'adapter-1',
+        'is_up': None,
+        'speed_mbps': None,
+        'mtu': None,
+        'addresses': [{
+            'family': 'IPv4',
+            'address': '192.0.2.10',
+            'netmask': None,
+            'broadcast': None,
+            'ptp': None,
+        }],
+        'mac_address': None,
+        'bytes_sent': None,
+        'bytes_received': None,
+        'packets_sent': None,
+        'packets_received': None,
+        'errors_sent': None,
+        'errors_received': None,
+        'drops_sent': None,
+        'drops_received': None,
+    }]
+
+
+def test_network_interface_service_returns_empty_results(monkeypatch):
+    monkeypatch.setattr(telemetry_service.psutil, 'net_if_addrs', lambda: {})
+    monkeypatch.setattr(telemetry_service.psutil, 'net_if_stats', lambda: {})
+    monkeypatch.setattr(telemetry_service.psutil, 'net_io_counters', lambda pernic: {})
+
+    assert telemetry_service.get_network_interfaces_telemetry() == []

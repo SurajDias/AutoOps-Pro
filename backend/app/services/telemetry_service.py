@@ -92,7 +92,7 @@ def get_network_interfaces_telemetry() -> list[dict[str, Any]]:
     for name in interface_names:
         stat = stats_by_name.get(name)
         counters = counters_by_name.get(name)
-        interface_addresses = addrs_by_name.get(name, [])
+        interface_addresses = addrs_by_name.get(name, []) or []
 
         normalized_addresses: list[dict[str, Any]] = []
         mac_address: str | None = None
@@ -100,15 +100,15 @@ def get_network_interfaces_telemetry() -> list[dict[str, Any]]:
         for address in interface_addresses:
             family_name = _normalize_family_name(getattr(address, 'family', None))
             address_value = getattr(address, 'address', None)
-            if getattr(address, 'family', None) == psutil.AF_LINK and address_value:
-                mac_address = address_value
+            if getattr(address, 'family', None) == getattr(psutil, 'AF_LINK', None) and address_value:
+                mac_address = str(address_value)
 
             normalized_addresses.append({
                 'family': family_name,
-                'address': address_value,
-                'netmask': getattr(address, 'netmask', None),
-                'broadcast': getattr(address, 'broadcast', None),
-                'ptp': getattr(address, 'ptp', None),
+                'address': str(address_value) if address_value is not None else None,
+                'netmask': _optional_string(getattr(address, 'netmask', None)),
+                'broadcast': _optional_string(getattr(address, 'broadcast', None)),
+                'ptp': _optional_string(getattr(address, 'ptp', None)),
             })
 
         normalized_addresses.sort(
@@ -121,18 +121,26 @@ def get_network_interfaces_telemetry() -> list[dict[str, Any]]:
 
         payload.append({
             'name': name,
-            'is_up': bool(getattr(stat, 'isup', False)) if stat is not None else False,
-            'speed_mbps': getattr(stat, 'speed', None) if stat is not None else None,
-            'mtu': getattr(stat, 'mtu', None) if stat is not None else None,
+            'is_up': bool(getattr(stat, 'isup')) if getattr(stat, 'isup', None) is not None else None,
+            'speed_mbps': _optional_int(getattr(stat, 'speed', None)) if stat is not None else None,
+            'mtu': _optional_int(getattr(stat, 'mtu', None)) if stat is not None else None,
             'addresses': normalized_addresses,
             'mac_address': mac_address,
-            'bytes_sent': getattr(counters, 'bytes_sent', None) if counters is not None else None,
-            'bytes_received': getattr(counters, 'bytes_recv', None) if counters is not None else None,
-            'packets_sent': getattr(counters, 'packets_sent', None) if counters is not None else None,
-            'packets_received': getattr(counters, 'packets_recv', None) if counters is not None else None,
+            'bytes_sent': _optional_int(getattr(counters, 'bytes_sent', None)) if counters is not None else None,
+            'bytes_received': _optional_int(getattr(counters, 'bytes_recv', None)) if counters is not None else None,
+            'packets_sent': _optional_int(getattr(counters, 'packets_sent', None)) if counters is not None else None,
+            'packets_received': _optional_int(getattr(counters, 'packets_recv', None)) if counters is not None else None,
+            'errors_sent': _optional_int(getattr(counters, 'errout', None)) if counters is not None else None,
+            'errors_received': _optional_int(getattr(counters, 'errin', None)) if counters is not None else None,
+            'drops_sent': _optional_int(getattr(counters, 'dropout', None)) if counters is not None else None,
+            'drops_received': _optional_int(getattr(counters, 'dropin', None)) if counters is not None else None,
         })
 
     return payload
+
+
+def _optional_string(value: Any) -> str | None:
+    return str(value) if value is not None else None
 
 
 def _normalize_family_name(family: int | str | None) -> str | None:
@@ -153,5 +161,6 @@ def _normalize_family_name(family: int | str | None) -> str | None:
         getattr(socket, 'AF_INET', None): 'IPv4',
         getattr(socket, 'AF_INET6', None): 'IPv6',
         getattr(socket, 'AF_LINK', None): 'MAC',
+        getattr(psutil, 'AF_LINK', None): 'MAC',
     }
     return mapping.get(family)

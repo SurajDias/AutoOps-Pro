@@ -38,7 +38,7 @@ class NetworkAddress(BaseModel):
 
 class NetworkInterface(BaseModel):
     name: str
-    is_up: bool
+    is_up: Optional[bool] = None
     speed_mbps: Optional[int] = None
     mtu: Optional[int] = None
     addresses: list[NetworkAddress] = Field(default_factory=list)
@@ -47,5 +47,9 @@ class NetworkInterface(BaseModel):
     bytes_received: Optional[int] = None
     packets_sent: Optional[int] = None
     packets_received: Optional[int] = None
+    errors_sent: Optional[int] = None
+    errors_received: Optional[int] = None
+    drops_sent: Optional[int] = None
+    drops_received: Optional[int] = None
 
     model_config = ConfigDict(extra='forbid')
