@@ -1,10 +1,11 @@
 from fastapi import APIRouter, HTTPException, status
 
-from app.schemas.telemetry import ListeningPort, NetworkInterface, ProcessTelemetry, SystemTelemetry
+from app.schemas.telemetry import ListeningPort, NetworkInterface, ProcessTelemetry, RiskSignal, SystemTelemetry
 from app.services.telemetry_service import (
     get_listening_ports_telemetry,
     get_network_interfaces_telemetry,
     get_processes_telemetry,
+    get_risk_signals_telemetry,
     get_system_telemetry,
 )
 
@@ -85,6 +86,25 @@ async def get_local_processes() -> list[ProcessTelemetry]:
         )
 
     return [ProcessTelemetry(**process_data) for process_data in processes]
+
+
+@router.get("/risk-signals", response_model=list[RiskSignal])
+async def get_local_risk_signals() -> list[RiskSignal]:
+    try:
+        signals = get_risk_signals_telemetry()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to collect local risk signals telemetry.",
+        ) from exc
+
+    if signals is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to collect local risk signals telemetry.",
+        )
+
+    return [RiskSignal(**signal_data) for signal_data in signals]
 
 
 @router.get("/network", response_model=list[NetworkInterface])

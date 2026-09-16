@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -75,5 +75,19 @@ class ProcessTelemetry(BaseModel):
     memory_rss_bytes: Optional[int] = None
     thread_count: Optional[int] = None
     creation_time: Optional[str] = None
+
+    model_config = ConfigDict(extra='forbid')
+
+
+SignalSeverity = Literal['INFO', 'LOW', 'MEDIUM', 'HIGH']
+
+
+class RiskSignal(BaseModel):
+    signal_id: str
+    severity: SignalSeverity
+    title: str
+    description: str
+    evidence: str
+    recommendation: Optional[str] = None
 
     model_config = ConfigDict(extra='forbid')

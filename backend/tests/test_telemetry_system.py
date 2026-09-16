@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.routes import telemetry as telemetry_route
+from app.schemas.telemetry import RiskSignal
 from app.services import telemetry_service
 
 
@@ -39,6 +40,10 @@ LISTENING_PORT_FIELDS = {
 PROCESS_FIELDS = {
     'pid', 'name', 'status', 'username', 'cpu_percent', 'memory_percent',
     'memory_rss_bytes', 'thread_count', 'creation_time',
+}
+
+RISK_SIGNAL_FIELDS = {
+    'signal_id', 'severity', 'title', 'description', 'evidence', 'recommendation',
 }
 
 
@@ -555,3 +560,106 @@ def test_processes_return_empty_list(monkeypatch):
     monkeypatch.setattr(telemetry_service.psutil, 'process_iter', lambda: [])
 
     assert telemetry_service.get_processes_telemetry() == []
+
+
+def _risk_system(memory_percent=20.0):
+    return {'memory_usage_percent': memory_percent}
+
+
+def _risk_processes(cpu_percent=10.0, count=1):
+    return [{'cpu_percent': cpu_percent} for _ in range(count)]
+
+
+def _risk_ports(address='127.0.0.1'):
+    return [{'local_address': address}]
+
+
+def test_risk_signals_endpoint_returns_strict_safe_schema(monkeypatch):
+    monkeypatch.setattr(telemetry_route, 'get_risk_signals_telemetry', lambda: [{
+        'signal_id': 'high-memory-utilization',
+        'severity': 'MEDIUM',
+        'title': 'High memory utilization',
+        'description': 'Local memory utilization is elevated.',
+        'evidence': 'Local memory utilization is 90.0%.',
+        'recommendation': 'Review local applications using memory.',
+    }])
+
+    signals = asyncio.run(telemetry_route.get_local_risk_signals())
+
+    assert len(signals) == 1
+    payload = signals[0].model_dump()
+    assert set(payload) == RISK_SIGNAL_FIELDS
+    assert RiskSignal(**payload).severity == 'MEDIUM'
+    assert not {'cmdline', 'environ', 'exe', 'path', 'remote_address', 'pid'} & set(payload)
+
+
+def test_risk_signals_sort_by_severity_then_signal_id(monkeypatch):
+    monkeypatch.setattr(telemetry_service, 'get_system_telemetry', lambda: _risk_system(96.0))
+    monkeypatch.setattr(telemetry_service, 'get_processes_telemetry', lambda: _risk_processes(91.0, telemetry_service.MAX_PROCESSES))
+    monkeypatch.setattr(telemetry_service, 'get_listening_ports_telemetry', lambda: _risk_ports('127.0.0.1'))
+
+    payload = telemetry_service.get_risk_signals_telemetry()
+
+    assert [signal['severity'] for signal in payload] == ['HIGH', 'HIGH', 'LOW']
+    assert [signal['signal_id'] for signal in payload] == [
+        'high-memory-utilization', 'high-process-cpu', 'high-process-count',
+    ]
+
+
+def test_risk_signals_thresholds_do_not_emit_below_limits(monkeypatch):
+    monkeypatch.setattr(telemetry_service, 'get_system_telemetry', lambda: _risk_system(84.9))
+    monkeypatch.setattr(telemetry_service, 'get_processes_telemetry', lambda: _risk_processes(74.9, telemetry_service.MAX_PROCESSES - 1))
+    monkeypatch.setattr(telemetry_service, 'get_listening_ports_telemetry', lambda: _risk_ports('127.0.0.1'))
+
+    assert telemetry_service.get_risk_signals_telemetry() == []
+
+
+def test_risk_signals_handle_missing_values_without_noise(monkeypatch):
+    monkeypatch.setattr(telemetry_service, 'get_system_telemetry', lambda: {'memory_usage_percent': None})
+    monkeypatch.setattr(telemetry_service, 'get_processes_telemetry', lambda: [{'cpu_percent': None}, {}])
+    monkeypatch.setattr(telemetry_service, 'get_listening_ports_telemetry', lambda: [{'local_address': None}])
+
+    assert telemetry_service.get_risk_signals_telemetry() == []
+
+
+def test_risk_signals_isolate_collector_failures(monkeypatch):
+    def fail_system():
+        raise telemetry_service.psutil.AccessDenied()
+
+    monkeypatch.setattr(telemetry_service, 'get_system_telemetry', fail_system)
+    monkeypatch.setattr(telemetry_service, 'get_processes_telemetry', lambda: _risk_processes(10.0))
+    monkeypatch.setattr(telemetry_service, 'get_listening_ports_telemetry', lambda: _risk_ports('127.0.0.1'))
+
+    payload = telemetry_service.get_risk_signals_telemetry()
+
+    assert len(payload) == 1
+    assert payload[0]['signal_id'] == 'telemetry-collection-limited'
+    assert payload[0]['severity'] == 'INFO'
+    assert 'system' in payload[0]['evidence']
+
+
+def test_risk_signals_detect_non_loopback_listening_without_exposing_addresses(monkeypatch):
+    monkeypatch.setattr(telemetry_service, 'get_system_telemetry', lambda: _risk_system())
+    monkeypatch.setattr(telemetry_service, 'get_processes_telemetry', lambda: _risk_processes())
+    monkeypatch.setattr(telemetry_service, 'get_listening_ports_telemetry', lambda: _risk_ports('::'))
+
+    payload = telemetry_service.get_risk_signals_telemetry()
+
+    assert [signal['signal_id'] for signal in payload] == ['non-loopback-listening']
+    assert '::' not in str(payload)
+
+
+def test_risk_signal_schema_rejects_unknown_severity():
+    try:
+        RiskSignal(
+            signal_id='test',
+            severity='CRITICAL',
+            title='Test',
+            description='Test',
+            evidence='Test',
+            recommendation=None,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('RiskSignal accepted an unsupported severity')

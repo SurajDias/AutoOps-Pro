@@ -10,7 +10,7 @@ import {
   Wifi,
   type LucideIcon,
 } from 'lucide-react';
-import { api, type ListeningPort, type NetworkInterface, type ProcessTelemetry, type SystemTelemetry } from '../../services/api';
+import { api, type ListeningPort, type NetworkInterface, type ProcessTelemetry, type RiskSignal, type SystemTelemetry } from '../../services/api';
 
 type TelemetrySection = {
   title: string;
@@ -312,6 +312,71 @@ function ProcessesContent({
   );
 }
 
+function RiskSignalsContent({
+  signals,
+  loading,
+  error,
+  onRetry,
+}: {
+  signals: RiskSignal[] | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return <div className="flex min-h-[110px] items-center justify-center text-xs text-text-muted">Loading local risk signals…</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-[110px] flex-col justify-center gap-3">
+        <p className="text-sm font-semibold text-white">Unable to load risk signals</p>
+        <p className="text-xs leading-relaxed text-text-muted">{error}</p>
+        <button type="button" onClick={onRetry} className="inline-flex w-fit items-center rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/20">Retry</button>
+      </div>
+    );
+  }
+
+  if (!signals?.length) {
+    return (
+      <div className="flex min-h-[110px] flex-col justify-center">
+        <p className="text-sm font-semibold text-white">No active risk signals</p>
+        <p className="mt-2 text-xs leading-relaxed text-text-muted">No informational risk signals were detected on this machine.</p>
+      </div>
+    );
+  }
+
+  const severityClasses: Record<RiskSignal['severity'], string> = {
+    HIGH: 'border-rose-400/30 bg-rose-500/10 text-rose-300',
+    MEDIUM: 'border-amber-400/30 bg-amber-500/10 text-amber-300',
+    LOW: 'border-cyan-400/30 bg-cyan-500/10 text-cyan-300',
+    INFO: 'border-white/[0.12] bg-white/[0.04] text-text-muted',
+  };
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-text-muted">Risk signals detected on this machine.</p>
+      <div className="space-y-3">
+        {signals.map((signal) => (
+          <article key={signal.signal_id} className="rounded-xl border border-white/[0.08] bg-surface/50 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <h3 className="text-sm font-semibold text-white">{signal.title}</h3>
+              <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold tracking-[0.12em] ${severityClasses[signal.severity]}`} aria-label={`Severity ${signal.severity}`}>
+                {signal.severity}
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-text-muted">{signal.description}</p>
+            <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+              <p className="text-text-muted"><span className="font-semibold text-white">Evidence:</span> {signal.evidence}</p>
+              {signal.recommendation && <p className="text-text-muted"><span className="font-semibold text-white">Recommendation:</span> {signal.recommendation}</p>}
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Telemetry() {
   const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -325,6 +390,9 @@ export default function Telemetry() {
   const [processes, setProcesses] = useState<ProcessTelemetry[] | null>(null);
   const [processesLoading, setProcessesLoading] = useState<boolean>(true);
   const [processesError, setProcessesError] = useState<string | null>(null);
+  const [riskSignals, setRiskSignals] = useState<RiskSignal[] | null>(null);
+  const [riskSignalsLoading, setRiskSignalsLoading] = useState<boolean>(true);
+  const [riskSignalsError, setRiskSignalsError] = useState<string | null>(null);
 
   const loadTelemetry = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -383,6 +451,20 @@ export default function Telemetry() {
     }
   }, []);
 
+  const loadRiskSignals = useCallback(async (signal?: AbortSignal) => {
+    setRiskSignalsLoading(true);
+    setRiskSignalsError(null);
+    try {
+      setRiskSignals(await api.getRiskSignals(signal));
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      setRiskSignals(null);
+      setRiskSignalsError(err instanceof Error ? err.message : 'Unable to load local risk signals.');
+    } finally {
+      setRiskSignalsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     void loadTelemetry(controller.signal);
@@ -406,6 +488,12 @@ export default function Telemetry() {
     void loadProcesses(controller.signal);
     return () => controller.abort();
   }, [loadProcesses]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadRiskSignals(controller.signal);
+    return () => controller.abort();
+  }, [loadRiskSignals]);
 
   const systemFields = [
     { label: 'OS', value: telemetry?.os_name ?? 'Unavailable' },
@@ -464,7 +552,7 @@ export default function Telemetry() {
                 </div>
 
                 <div className="rounded-full border border-white/[0.08] bg-elevated/50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-text-muted">
-                  {title === 'System Overview' ? (loading ? 'Loading' : telemetry ? 'Live' : 'Idle') : title === 'Network Interfaces' ? (networkLoading ? 'Loading' : networkInterfaces ? 'Live' : 'Idle') : title === 'Listening Ports' ? (listeningPortsLoading ? 'Loading' : listeningPorts ? 'Live' : 'Idle') : title === 'Processes' ? (processesLoading ? 'Loading' : processes ? 'Live' : 'Idle') : 'Idle'}
+                  {title === 'System Overview' ? (loading ? 'Loading' : telemetry ? 'Live' : 'Idle') : title === 'Network Interfaces' ? (networkLoading ? 'Loading' : networkInterfaces ? 'Live' : 'Idle') : title === 'Listening Ports' ? (listeningPortsLoading ? 'Loading' : listeningPorts ? 'Live' : 'Idle') : title === 'Processes' ? (processesLoading ? 'Loading' : processes ? 'Live' : 'Idle') : title === 'Risk Signals' ? (riskSignalsLoading ? 'Loading' : riskSignals ? 'Live' : 'Idle') : 'Idle'}
                 </div>
               </div>
 
@@ -519,6 +607,10 @@ export default function Telemetry() {
                 <div className="mt-5 rounded-2xl border border-white/[0.08] bg-elevated/35 p-5 min-h-[140px]">
                   <ProcessesContent processes={processes} loading={processesLoading} error={processesError} onRetry={() => void loadProcesses()} />
                 </div>
+              ) : title === 'Risk Signals' ? (
+                <div className="mt-5 rounded-2xl border border-white/[0.08] bg-elevated/35 p-5 min-h-[140px]">
+                  <RiskSignalsContent signals={riskSignals} loading={riskSignalsLoading} error={riskSignalsError} onRetry={() => void loadRiskSignals()} />
+                </div>
               ) : (
                 <EmptyTelemetryState />
               )}
@@ -534,7 +626,7 @@ export default function Telemetry() {
             <div>
               <p className="text-sm font-semibold text-white">Local telemetry shell ready</p>
               <p className="mt-1 text-xs leading-relaxed text-text-muted">
-                System Overview, Network Interfaces, and Listening Ports are populated from this machine via local backend telemetry endpoints. The remaining sections are placeholders until their corresponding backend collectors are available.
+                System Overview, Network Interfaces, Listening Ports, Processes, and Risk Signals are populated from this machine via local backend telemetry endpoints. No remote hosts or external services are queried.
               </p>
             </div>
           </div>

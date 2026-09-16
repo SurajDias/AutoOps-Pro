@@ -3,6 +3,7 @@ from __future__ import annotations
 import platform
 import socket
 import time
+import ipaddress
 from math import isfinite
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -11,6 +12,14 @@ import psutil
 
 
 MAX_PROCESSES = 100
+
+# These thresholds are intentionally conservative and informational. They are
+# evaluated against one local snapshot and do not represent incident criteria.
+MEMORY_MEDIUM_THRESHOLD = 85.0
+MEMORY_HIGH_THRESHOLD = 95.0
+CPU_MEDIUM_THRESHOLD = 75.0
+CPU_HIGH_THRESHOLD = 90.0
+PROCESS_COUNT_SIGNAL_THRESHOLD = MAX_PROCESSES
 
 
 def _safe_call(callback: Callable[[], Any]) -> Any:
@@ -232,6 +241,88 @@ def get_processes_telemetry() -> list[dict[str, Any]]:
     return normalized[:MAX_PROCESSES]
 
 
+def get_risk_signals_telemetry() -> list[dict[str, Any]]:
+    """Derive explainable risk signals from one local telemetry snapshot."""
+    signals: list[dict[str, Any]] = []
+    collector_failures: list[str] = []
+
+    system = _collect_risk_source('system', get_system_telemetry, collector_failures)
+    processes = _collect_risk_source('processes', get_processes_telemetry, collector_failures)
+    listening_ports = _collect_risk_source('listening ports', get_listening_ports_telemetry, collector_failures)
+
+    if isinstance(system, dict):
+        memory_percent = _optional_float(system.get('memory_usage_percent'))
+        if memory_percent is not None and memory_percent >= MEMORY_MEDIUM_THRESHOLD:
+            severity = 'HIGH' if memory_percent >= MEMORY_HIGH_THRESHOLD else 'MEDIUM'
+            signals.append({
+                'signal_id': 'high-memory-utilization',
+                'severity': severity,
+                'title': 'High memory utilization',
+                'description': 'Local memory utilization is elevated in the current snapshot.',
+                'evidence': f'Local memory utilization is {memory_percent:.1f}%.',
+                'recommendation': 'Review local applications using memory if the condition persists.',
+            })
+
+    if isinstance(processes, list):
+        cpu_values = [
+            value for process in processes
+            if isinstance(process, dict)
+            for value in [_optional_float(process.get('cpu_percent'))]
+            if value is not None
+        ]
+        if cpu_values:
+            highest_cpu = max(cpu_values)
+            if highest_cpu >= CPU_MEDIUM_THRESHOLD:
+                severity = 'HIGH' if highest_cpu >= CPU_HIGH_THRESHOLD else 'MEDIUM'
+                signals.append({
+                    'signal_id': 'high-process-cpu',
+                    'severity': severity,
+                    'title': 'High process CPU utilization',
+                    'description': 'At least one local process reported elevated CPU utilization.',
+                    'evidence': f'The highest reported local process CPU utilization is {highest_cpu:.1f}%.',
+                    'recommendation': 'Review local workload activity if elevated CPU usage persists.',
+                })
+
+        if len(processes) >= PROCESS_COUNT_SIGNAL_THRESHOLD:
+            signals.append({
+                'signal_id': 'high-process-count',
+                'severity': 'LOW',
+                'title': 'High local process count',
+                'description': 'The bounded local process collector reached its configured result limit.',
+                'evidence': f'At least {PROCESS_COUNT_SIGNAL_THRESHOLD} local processes were reported.',
+                'recommendation': 'Review the local process list if this count is unexpected.',
+            })
+
+    if isinstance(listening_ports, list):
+        non_loopback_count = sum(
+            1 for port in listening_ports
+            if isinstance(port, dict) and _is_non_loopback_address(port.get('local_address'))
+        )
+        if non_loopback_count:
+            signals.append({
+                'signal_id': 'non-loopback-listening',
+                'severity': 'LOW',
+                'title': 'Service listening beyond loopback',
+                'description': 'One or more local listening sockets are bound beyond loopback.',
+                'evidence': f'{non_loopback_count} local listening socket(s) are bound beyond loopback.',
+                'recommendation': 'Confirm that locally exposed services are intentionally reachable on this host network.',
+            })
+
+    if collector_failures:
+        collector_failures.sort()
+        signals.append({
+            'signal_id': 'telemetry-collection-limited',
+            'severity': 'INFO',
+            'title': 'Some telemetry is unavailable',
+            'description': 'One or more local telemetry collectors could not provide a snapshot.',
+            'evidence': f'Unavailable local collectors: {", ".join(collector_failures)}.',
+            'recommendation': 'Review local permissions or collector availability before relying on a complete snapshot.',
+        })
+
+    severity_priority = {'HIGH': 0, 'MEDIUM': 1, 'LOW': 2, 'INFO': 3}
+    return sorted(signals, key=lambda signal: (severity_priority[signal['severity']], signal['signal_id']))
+
+
 def _connection_protocol(connection_type: Any) -> str | None:
     if connection_type == getattr(socket, 'SOCK_STREAM', None):
         return 'TCP'
@@ -265,6 +356,23 @@ def _safe_process_call(process: Any, attribute: str) -> Any:
         return None
     except Exception:
         return None
+
+
+def _collect_risk_source(name: str, collector: Callable[[], Any], failures: list[str]) -> Any:
+    try:
+        return collector()
+    except Exception:
+        failures.append(name)
+        return None
+
+
+def _is_non_loopback_address(address: Any) -> bool:
+    if not isinstance(address, str) or not address.strip():
+        return False
+    try:
+        return not ipaddress.ip_address(address.strip()).is_loopback
+    except ValueError:
+        return False
 
 
 def _normalize_family_name(family: int | str | None) -> str | None:

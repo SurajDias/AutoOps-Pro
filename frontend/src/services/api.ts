@@ -112,6 +112,7 @@ export const api = {
   getNetworkInterfaces: (signal?: AbortSignal) => request<NetworkInterface[]>('/telemetry/network-interfaces', {}, signal),
   getListeningPorts: (signal?: AbortSignal) => request<ListeningPort[]>('/telemetry/listening-ports', {}, signal),
   getProcesses: (signal?: AbortSignal) => request<ProcessTelemetry[]>('/telemetry/processes', {}, signal),
+  getRiskSignals: (signal?: AbortSignal) => request<RiskSignal[]>('/telemetry/risk-signals', {}, signal),
   getMetricsMode: (signal?: AbortSignal) => request<{ mode: MetricsMode }>('/metrics/mode', {}, signal),
   setMetricsMode: (mode: MetricsMode, signal?: AbortSignal) => request<{ success: boolean; mode?: MetricsMode; message?: string }>(`/metrics/mode/${mode}`, { method: 'POST' }, signal),
   getDemoScenarios: (signal?: AbortSignal) => request<Record<string, DemoScenario>>('/demo/scenarios', {}, signal),
@@ -245,4 +246,15 @@ export interface ProcessTelemetry {
   memory_rss_bytes: number | null;
   thread_count: number | null;
   creation_time: string | null;
+}
+
+export type RiskSignalSeverity = 'INFO' | 'LOW' | 'MEDIUM' | 'HIGH';
+
+export interface RiskSignal {
+  signal_id: string;
+  severity: RiskSignalSeverity;
+  title: string;
+  description: string;
+  evidence: string;
+  recommendation: string | null;
 }
