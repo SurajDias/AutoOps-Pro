@@ -23,10 +23,59 @@ export interface SystemStatus {
 export interface RecommendationCandidate { action: string; label: string; score: number; rank: number; evidence: string[]; }
 export interface RecommendationExplanation { recommended_action: string; reason: string; action_score?: number; candidates: RecommendationCandidate[]; selection_factors: string[]; }
 export interface IncidentEvidenceSnapshot { captured_at?: string; metrics?: Partial<Metrics>; anomaly_score?: number; anomaly_reason?: string; rule_evidence?: boolean; isolation_forest_anomaly?: boolean; detection_thresholds?: Partial<Metrics>; root_cause?: string; primary_issue?: string; root_cause_confidence?: number; root_cause_details?: string[]; severity?: string; risk?: string; recommended_action?: string; recommendation_explanation?: RecommendationExplanation; trend?: string; estimated_failure_window?: string; dependency_service_id?: string | null; }
+export interface TelemetrySystemSummary {
+  os_name?: string | null;
+  os_release?: string | null;
+  architecture?: string | null;
+  cpu_logical_cores?: number | null;
+  cpu_physical_cores?: number | null;
+  total_memory_bytes?: number | null;
+  memory_usage_percent?: number | null;
+  uptime_seconds?: number | null;
+}
+export interface TelemetryNetworkInterface {
+  name?: string | null;
+  is_up?: boolean | null;
+  speed_mbps?: number | null;
+  mtu?: number | null;
+  address_count?: number | null;
+}
+export interface TelemetryListeningPorts {
+  count?: number | null;
+  tcp_count?: number | null;
+  udp_count?: number | null;
+  non_loopback_count?: number | null;
+}
+export interface TelemetryProcessSummary {
+  count?: number | null;
+  status_counts?: Record<string, number>;
+  cpu_percent_available?: boolean | null;
+  max_cpu_percent?: number | null;
+  max_memory_percent?: number | null;
+  total_memory_rss_bytes?: number | null;
+  at_collector_limit?: boolean | null;
+}
+export interface TelemetryRiskSignal {
+  signal_id?: string;
+  severity?: string;
+  title?: string;
+  description?: string;
+  evidence?: string;
+  recommendation?: string;
+}
+export interface IncidentTelemetrySnapshot {
+  captured_at?: string | null;
+  system?: TelemetrySystemSummary | null;
+  network_interfaces?: TelemetryNetworkInterface[] | null;
+  listening_ports?: TelemetryListeningPorts | null;
+  processes?: TelemetryProcessSummary | null;
+  risk_signals?: TelemetryRiskSignal[] | null;
+  limitations?: string[] | null;
+}
 export interface OperatorFeedback { status: 'accepted' | 'rejected'; reason: string | null; created_at: string; action: string; }
 export interface IncidentTimelineEvent { timestamp: string; event_type: 'created' | 'evidence_captured' | 'evidence_unavailable' | 'diagnosed' | 'recommended' | 'recommendation_accepted' | 'recommendation_rejected' | 'resolved'; title: string; description: string; }
-export interface Incident { id: number; service_name: string; severity: string; anomaly_type: string; root_cause: string; recommendation: string; status: IncidentStatus; timestamp: string; resolved_at?: string | null; evidence_snapshot?: IncidentEvidenceSnapshot | null; }
-export interface IncidentDetail extends Incident { timeline: IncidentTimelineEvent[]; recommendation_explanation?: RecommendationExplanation | null; operator_feedback?: OperatorFeedback | null; }
+export interface Incident { id: number; service_name: string; severity: string; anomaly_type: string; root_cause: string; recommendation: string; status: IncidentStatus; timestamp: string; resolved_at?: string | null; evidence_snapshot?: IncidentEvidenceSnapshot | null; telemetry_snapshot?: IncidentTelemetrySnapshot | null; }
+export interface IncidentDetail extends Incident { timeline: IncidentTimelineEvent[]; recommendation_explanation?: RecommendationExplanation | null; operator_feedback?: OperatorFeedback | null; telemetry_snapshot?: IncidentTelemetrySnapshot | null; }
 export interface IncidentStatistics { total_incidents: number; open_incidents: number; resolved_incidents: number; high_severity_incidents: number; }
 export interface IncidentPatterns { most_common_root_cause: string | null; most_affected_service: string | null; recurring_incidents: number; }
 export interface HistoricalIncidentData { id: number; service_name: string; severity: string; anomaly_type: string; root_cause: string; recommendation: string; status: IncidentStatus; timestamp: string | null; resolved_at: string | null; incident_duration: string | null; }
