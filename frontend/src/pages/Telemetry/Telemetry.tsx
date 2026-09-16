@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Activity,
@@ -10,7 +10,7 @@ import {
   Wifi,
   type LucideIcon,
 } from 'lucide-react';
-import type { SystemTelemetry } from '../../services/api';
+import { api, type SystemTelemetry } from '../../services/api';
 
 type TelemetrySection = {
   title: string;
@@ -118,10 +118,30 @@ function formatBootTime(value: string | null) {
 }
 
 export default function Telemetry() {
-  // Page is a UI-only shell for Phase 9A. No backend calls are made yet.
-  const [telemetry] = useState<SystemTelemetry | null>(null);
-  const [loading] = useState<boolean>(false);
-  const [error] = useState<string | null>(null);
+  const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadTelemetry = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.getSystemTelemetry(signal);
+      setTelemetry(data);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      setTelemetry(null);
+      setError(err instanceof Error ? err.message : 'Unable to load local host telemetry.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadTelemetry(controller.signal);
+    return () => controller.abort();
+  }, [loadTelemetry]);
 
   const systemFields = [
     { label: 'OS', value: telemetry?.os_name ?? 'Unavailable' },
@@ -130,8 +150,11 @@ export default function Telemetry() {
     { label: 'Architecture', value: telemetry?.architecture ?? 'Unavailable' },
     { label: 'Hostname', value: telemetry?.hostname ?? 'Unavailable' },
     { label: 'CPU logical cores', value: telemetry?.cpu_logical_cores == null ? 'Unavailable' : String(telemetry.cpu_logical_cores) },
+    { label: 'CPU physical cores', value: telemetry?.cpu_physical_cores == null ? 'Unavailable' : String(telemetry.cpu_physical_cores) },
     { label: 'Total memory', value: formatBytes(telemetry?.total_memory_bytes ?? null) },
     { label: 'Available memory', value: formatBytes(telemetry?.available_memory_bytes ?? null) },
+    { label: 'Used memory', value: formatBytes(telemetry?.used_memory_bytes ?? null) },
+    { label: 'Memory usage', value: telemetry?.memory_usage_percent == null ? 'Unavailable' : `${telemetry.memory_usage_percent.toFixed(1)}%` },
     { label: 'Uptime', value: formatUptime(telemetry?.uptime_seconds ?? null) },
     { label: 'Boot time', value: formatBootTime(telemetry?.boot_time ?? null) },
   ];
@@ -193,11 +216,10 @@ export default function Telemetry() {
                       <p className="text-xs leading-relaxed text-text-muted">{error}</p>
                       <button
                         type="button"
-                        disabled
-                        title="Telemetry backend not connected"
-                        className="inline-flex w-fit items-center rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] font-semibold text-primary/30 cursor-not-allowed"
+                        onClick={() => void loadTelemetry()}
+                        className="inline-flex w-fit items-center rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/20"
                       >
-                        Retry (awaiting backend)
+                        Retry
                       </button>
                     </div>
                   ) : telemetry ? (

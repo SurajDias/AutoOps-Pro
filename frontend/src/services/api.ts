@@ -190,8 +190,11 @@ export interface SystemTelemetry {
   architecture: string | null;
   hostname: string | null;
   cpu_logical_cores: number | null;
+  cpu_physical_cores: number | null;
   total_memory_bytes: number | null;
   available_memory_bytes: number | null;
+  used_memory_bytes: number | null;
+  memory_usage_percent: number | null;
   uptime_seconds: number | null;
   boot_time: string | null;
   collected_at: string | null;

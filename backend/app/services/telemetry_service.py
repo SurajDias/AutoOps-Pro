@@ -3,6 +3,7 @@ from __future__ import annotations
 import platform
 import socket
 import time
+from math import isfinite
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -20,20 +21,41 @@ def _uptime_seconds() -> float | None:
     boot_time = _safe_call(psutil.boot_time)
     if boot_time is None:
         return None
-    return max(0.0, time.time() - float(boot_time))
+    try:
+        return max(0.0, time.time() - float(boot_time))
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _boot_time_iso() -> str | None:
     boot_epoch = _safe_call(psutil.boot_time)
     if boot_epoch is None:
         return None
-    return datetime.fromtimestamp(float(boot_epoch), tz=timezone.utc).isoformat()
+    try:
+        return datetime.fromtimestamp(float(boot_epoch), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _optional_int(value: Any) -> int | None:
+    """Return JSON-safe integer telemetry values without coercing invalid data."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _optional_float(value: Any) -> float | None:
+    """Return JSON-safe numeric telemetry values without coercing invalid data."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    normalized = float(value)
+    return normalized if isfinite(normalized) else None
 
 
 def get_system_telemetry() -> dict[str, Any]:
     memory = _safe_call(psutil.virtual_memory)
     total_memory = getattr(memory, 'total', None) if memory is not None else None
     available_memory = getattr(memory, 'available', None) if memory is not None else None
+    used_memory = getattr(memory, 'used', None) if memory is not None else None
+    memory_percent = getattr(memory, 'percent', None) if memory is not None else None
 
     telemetry: dict[str, Any] = {
         'os_name': _safe_call(platform.system),
@@ -42,11 +64,94 @@ def get_system_telemetry() -> dict[str, Any]:
         'kernel_version': _safe_call(lambda: platform.uname().release) or _safe_call(platform.version),
         'architecture': _safe_call(platform.machine),
         'hostname': _safe_call(socket.gethostname),
-        'cpu_logical_cores': _safe_call(lambda: psutil.cpu_count(logical=True)),
-        'total_memory_bytes': total_memory,
-        'available_memory_bytes': available_memory,
+        'cpu_logical_cores': _optional_int(_safe_call(lambda: psutil.cpu_count(logical=True))),
+        'cpu_physical_cores': _optional_int(_safe_call(lambda: psutil.cpu_count(logical=False))),
+        'total_memory_bytes': _optional_int(total_memory),
+        'available_memory_bytes': _optional_int(available_memory),
+        'used_memory_bytes': _optional_int(used_memory),
+        'memory_usage_percent': _optional_float(memory_percent),
         'uptime_seconds': _uptime_seconds(),
         'boot_time': _boot_time_iso(),
         'collected_at': datetime.now(timezone.utc),
     }
     return telemetry
+
+
+def get_network_interfaces_telemetry() -> list[dict[str, Any]]:
+    addrs_by_name = _safe_call(psutil.net_if_addrs) or {}
+    stats_by_name = _safe_call(psutil.net_if_stats) or {}
+    counters_by_name = _safe_call(lambda: psutil.net_io_counters(pernic=True)) or {}
+
+    interface_names = sorted({
+        *[str(name) for name in addrs_by_name.keys()],
+        *[str(name) for name in stats_by_name.keys()],
+        *[str(name) for name in counters_by_name.keys()],
+    })
+
+    payload: list[dict[str, Any]] = []
+    for name in interface_names:
+        stat = stats_by_name.get(name)
+        counters = counters_by_name.get(name)
+        interface_addresses = addrs_by_name.get(name, [])
+
+        normalized_addresses: list[dict[str, Any]] = []
+        mac_address: str | None = None
+
+        for address in interface_addresses:
+            family_name = _normalize_family_name(getattr(address, 'family', None))
+            address_value = getattr(address, 'address', None)
+            if getattr(address, 'family', None) == psutil.AF_LINK and address_value:
+                mac_address = address_value
+
+            normalized_addresses.append({
+                'family': family_name,
+                'address': address_value,
+                'netmask': getattr(address, 'netmask', None),
+                'broadcast': getattr(address, 'broadcast', None),
+                'ptp': getattr(address, 'ptp', None),
+            })
+
+        normalized_addresses.sort(
+            key=lambda item: (
+                str(item.get('family') or ''),
+                str(item.get('address') or ''),
+                str(item.get('netmask') or ''),
+            )
+        )
+
+        payload.append({
+            'name': name,
+            'is_up': bool(getattr(stat, 'isup', False)) if stat is not None else False,
+            'speed_mbps': getattr(stat, 'speed', None) if stat is not None else None,
+            'mtu': getattr(stat, 'mtu', None) if stat is not None else None,
+            'addresses': normalized_addresses,
+            'mac_address': mac_address,
+            'bytes_sent': getattr(counters, 'bytes_sent', None) if counters is not None else None,
+            'bytes_received': getattr(counters, 'bytes_recv', None) if counters is not None else None,
+            'packets_sent': getattr(counters, 'packets_sent', None) if counters is not None else None,
+            'packets_received': getattr(counters, 'packets_recv', None) if counters is not None else None,
+        })
+
+    return payload
+
+
+def _normalize_family_name(family: int | str | None) -> str | None:
+    if family is None:
+        return None
+
+    if isinstance(family, str):
+        normalized = family.strip().upper()
+        if normalized in {'AF_INET', 'INET', 'IPv4', 'INET4'}:
+            return 'IPv4'
+        if normalized in {'AF_INET6', 'INET6', 'IPv6', 'INET46'}:
+            return 'IPv6'
+        if normalized in {'AF_LINK', 'MAC', 'LINK'}:
+            return 'MAC'
+        return normalized
+
+    mapping = {
+        getattr(socket, 'AF_INET', None): 'IPv4',
+        getattr(socket, 'AF_INET6', None): 'IPv6',
+        getattr(socket, 'AF_LINK', None): 'MAC',
+    }
+    return mapping.get(family)

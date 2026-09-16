@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SystemTelemetry(BaseModel):
@@ -14,10 +14,38 @@ class SystemTelemetry(BaseModel):
     architecture: Optional[str] = None
     hostname: Optional[str] = None
     cpu_logical_cores: Optional[int] = None
+    cpu_physical_cores: Optional[int] = None
     total_memory_bytes: Optional[int] = None
     available_memory_bytes: Optional[int] = None
+    used_memory_bytes: Optional[int] = None
+    memory_usage_percent: Optional[float] = None
     uptime_seconds: Optional[float] = None
     boot_time: Optional[str] = None
     collected_at: Optional[datetime] = None
+
+    model_config = ConfigDict(extra='forbid')
+
+
+class NetworkAddress(BaseModel):
+    family: Optional[str] = None
+    address: Optional[str] = None
+    netmask: Optional[str] = None
+    broadcast: Optional[str] = None
+    ptp: Optional[str] = None
+
+    model_config = ConfigDict(extra='forbid')
+
+
+class NetworkInterface(BaseModel):
+    name: str
+    is_up: bool
+    speed_mbps: Optional[int] = None
+    mtu: Optional[int] = None
+    addresses: list[NetworkAddress] = Field(default_factory=list)
+    mac_address: Optional[str] = None
+    bytes_sent: Optional[int] = None
+    bytes_received: Optional[int] = None
+    packets_sent: Optional[int] = None
+    packets_received: Optional[int] = None
 
     model_config = ConfigDict(extra='forbid')
