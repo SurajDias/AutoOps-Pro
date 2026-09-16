@@ -167,7 +167,7 @@ def create_incident_record(incident_data):
                 {"dedupe_key": dedupe_key},
             )
 
-        existing = (
+        existing_candidates = (
             db.query(Incident)
             .filter(
                 Incident.service_name == incident_data.get("service_name"),
@@ -179,7 +179,14 @@ def create_incident_record(incident_data):
                 # must never backfill it with current telemetry.
                 Incident.evidence_snapshot.isnot(None),
             )
-            .first()
+            .all()
+        )
+        # PostgreSQL JSONB may persist Python None as the JSON null literal,
+        # which still satisfies ``IS NOT NULL``. Only a real evidence object
+        # represents an evidence-backed incident for deduplication.
+        existing = next(
+            (candidate for candidate in existing_candidates if isinstance(candidate.evidence_snapshot, dict)),
+            None,
         )
         if existing is not None:
             # Explicitly end the transaction so the transaction-scoped advisory

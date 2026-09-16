@@ -18,6 +18,7 @@ from app.schemas.incident import (
     HistoricalIntelligence,
 )
 from app.services.historical_intelligence import get_historical_intelligence
+from app.services.telemetry_service import collect_incident_telemetry_snapshot
 from app.storytelling.incident_report_generator import build_incident_report
 from app.database.postgres import get_db
 
@@ -152,7 +153,9 @@ def home():
 @router.post("/")
 def create_incident(incident: IncidentCreate, db: Session = Depends(get_db)):
     try:
-        new_incident = Incident(**incident.model_dump())
+        incident_data = incident.model_dump()
+        incident_data["telemetry_snapshot"] = collect_incident_telemetry_snapshot()
+        new_incident = Incident(**incident_data)
         db.add(new_incident)
         db.commit()
         db.refresh(new_incident)

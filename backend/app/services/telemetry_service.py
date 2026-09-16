@@ -243,12 +243,21 @@ def get_processes_telemetry() -> list[dict[str, Any]]:
 
 def get_risk_signals_telemetry() -> list[dict[str, Any]]:
     """Derive explainable risk signals from one local telemetry snapshot."""
-    signals: list[dict[str, Any]] = []
     collector_failures: list[str] = []
 
     system = _collect_risk_source('system', get_system_telemetry, collector_failures)
     processes = _collect_risk_source('processes', get_processes_telemetry, collector_failures)
     listening_ports = _collect_risk_source('listening ports', get_listening_ports_telemetry, collector_failures)
+    return _build_risk_signals(system, processes, listening_ports, collector_failures)
+
+
+def _build_risk_signals(
+    system: Any,
+    processes: Any,
+    listening_ports: Any,
+    collector_failures: list[str],
+) -> list[dict[str, Any]]:
+    signals: list[dict[str, Any]] = []
 
     if isinstance(system, dict):
         memory_percent = _optional_float(system.get('memory_usage_percent'))
@@ -321,6 +330,119 @@ def get_risk_signals_telemetry() -> list[dict[str, Any]]:
 
     severity_priority = {'HIGH': 0, 'MEDIUM': 1, 'LOW': 2, 'INFO': 3}
     return sorted(signals, key=lambda signal: (severity_priority[signal['severity']], signal['signal_id']))
+
+
+def collect_incident_telemetry_snapshot() -> dict[str, Any]:
+    """Collect one safe, JSON-serializable local snapshot for incident history."""
+    captured_at = datetime.now(timezone.utc).isoformat()
+    limitations: list[str] = []
+
+    system = _collect_snapshot_source('system', get_system_telemetry, limitations)
+    interfaces = _collect_snapshot_source('network interfaces', get_network_interfaces_telemetry, limitations)
+    listening_ports = _collect_snapshot_source('listening ports', get_listening_ports_telemetry, limitations)
+    processes = _collect_snapshot_source('processes', get_processes_telemetry, limitations)
+
+    risk_signals = _build_risk_signals(system, processes, listening_ports, limitations)
+    return {
+        'captured_at': captured_at,
+        'system': _snapshot_system_summary(system),
+        'network_interfaces': _snapshot_network_summary(interfaces),
+        'listening_ports': _snapshot_listening_ports_summary(listening_ports),
+        'processes': _snapshot_process_summary(processes),
+        'risk_signals': risk_signals,
+        'limitations': sorted(set(limitations)),
+    }
+
+
+def _collect_snapshot_source(name: str, collector: Callable[[], Any], limitations: list[str]) -> Any:
+    try:
+        value = collector()
+    except Exception:
+        limitations.append(f'{name} collector unavailable')
+        return None
+    if value is None:
+        limitations.append(f'{name} collector returned no data')
+    return value
+
+
+def _snapshot_system_summary(system: Any) -> dict[str, Any]:
+    if not isinstance(system, dict):
+        return {}
+    fields = (
+        'os_name', 'os_release', 'architecture', 'cpu_logical_cores',
+        'cpu_physical_cores', 'total_memory_bytes', 'memory_usage_percent',
+        'uptime_seconds',
+    )
+    return {field: system.get(field) for field in fields if system.get(field) is not None}
+
+
+def _snapshot_network_summary(interfaces: Any) -> list[dict[str, Any]]:
+    if not isinstance(interfaces, list):
+        return []
+    summary = []
+    for interface in interfaces:
+        if not isinstance(interface, dict):
+            continue
+        summary.append({
+            'name': _optional_string(interface.get('name')),
+            'is_up': interface.get('is_up') if isinstance(interface.get('is_up'), bool) else None,
+            'speed_mbps': _optional_int(interface.get('speed_mbps')),
+            'mtu': _optional_int(interface.get('mtu')),
+            'address_count': len(interface.get('addresses') or []) if isinstance(interface.get('addresses'), list) else 0,
+        })
+    return summary
+
+
+def _snapshot_listening_ports_summary(listening_ports: Any) -> dict[str, int]:
+    ports = listening_ports if isinstance(listening_ports, list) else []
+    tcp_count = sum(1 for port in ports if isinstance(port, dict) and port.get('protocol') == 'TCP')
+    udp_count = sum(1 for port in ports if isinstance(port, dict) and port.get('protocol') == 'UDP')
+    non_loopback_count = sum(
+        1 for port in ports
+        if isinstance(port, dict) and _is_non_loopback_address(port.get('local_address'))
+    )
+    return {
+        'count': len(ports),
+        'tcp_count': tcp_count,
+        'udp_count': udp_count,
+        'non_loopback_count': non_loopback_count,
+    }
+
+
+def _snapshot_process_summary(processes: Any) -> dict[str, Any]:
+    records = processes if isinstance(processes, list) else []
+    status_counts: dict[str, int] = {}
+    cpu_values: list[float] = []
+    memory_values: list[float] = []
+    total_rss = 0
+    rss_available = False
+
+    for process in records:
+        if not isinstance(process, dict):
+            continue
+        status = _optional_string(process.get('status'))
+        if status:
+            status_counts[status] = status_counts.get(status, 0) + 1
+        cpu = _optional_float(process.get('cpu_percent'))
+        if cpu is not None:
+            cpu_values.append(cpu)
+        memory = _optional_float(process.get('memory_percent'))
+        if memory is not None:
+            memory_values.append(memory)
+        rss = _optional_int(process.get('memory_rss_bytes'))
+        if rss is not None:
+            total_rss += rss
+            rss_available = True
+
+    return {
+        'count': len(records),
+        'status_counts': dict(sorted(status_counts.items())),
+        'cpu_percent_available': bool(cpu_values),
+        'max_cpu_percent': max(cpu_values) if cpu_values else None,
+        'max_memory_percent': max(memory_values) if memory_values else None,
+        'total_memory_rss_bytes': total_rss if rss_available else None,
+        'at_collector_limit': len(records) >= MAX_PROCESSES,
+    }
 
 
 def _connection_protocol(connection_type: Any) -> str | None:

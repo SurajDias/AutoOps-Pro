@@ -706,5 +706,5 @@ class TestFieldNameCorrectness:
 
         # Check that the field exists with the new name
         assert "most_frequently_recorded_recommendation" in result["historical_summary"]
-        # Old field name should NOT exist
-        assert "most_common_recommendation" not in result["historical_summary"]
+        # The original field remains as a compatibility alias.
+        assert result["historical_summary"]["most_common_recommendation"] == "scale_cpu"

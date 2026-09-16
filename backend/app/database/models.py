@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, CheckConstraint
+from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, CheckConstraint, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
@@ -36,12 +36,15 @@ class Incident(Base):
     # Captured once by the automatic incident-creation path. Resolution only
     # changes lifecycle state, preserving the original diagnostic evidence.
     evidence_snapshot = Column(JSONB, nullable=True)
+    # Safe local-host telemetry captured once at incident creation time.
+    telemetry_snapshot = Column(JSONB, nullable=True)
 
 
 class RecommendationExecution(Base):
     __tablename__ = "recommendation_executions"
     __table_args__ = (
         CheckConstraint("attempt_number >= 1", name="ck_recommendation_exec_attempt_positive"),
+        UniqueConstraint("incident_id", "attempt_number", name="uq_recommendation_exec_incident_attempt"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -51,7 +54,12 @@ class RecommendationExecution(Base):
     recommendation = Column(String, nullable=False)
 
     # Execution lifecycle fields
-    execution_status = Column(String, nullable=False)
+    execution_status = Column(
+        String,
+        nullable=False,
+        default="PLANNED",
+        server_default="PLANNED",
+    )
     execution_method = Column(String, nullable=True)
     actor = Column(String, nullable=True)
 

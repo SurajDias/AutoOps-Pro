@@ -14,6 +14,7 @@ ARCHITECTURE:
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -42,19 +43,18 @@ def get_historical_intelligence(incident_id: int, db: Session) -> dict[str, Any]
     if incident is None:
         return {}
 
-    # Query all incidents excluding the current one by both ID and timestamp.
-    # Only include incidents with timestamp strictly before current incident (temporally prior).
-    all_incidents = (
-        db.query(Incident)
-        .filter(
-            Incident.id != incident_id,
-            Incident.timestamp < incident.timestamp
-        )
-        .all()
-    )
-    
-    # Sort deterministically: timestamp DESC (most recent), then ID ASC (stable tie-breaker)
-    all_incidents.sort(key=lambda x: (x.timestamp, x.id), reverse=(True, False))
+    # Fetch candidates first, then apply the temporal boundary in Python. This
+    # preserves legacy rows with nullable timestamps and handles records
+    # created in the same local capture window, where timestamp precision can
+    # put a later ID a few microseconds after the current row.
+    candidates = db.query(Incident).filter(Incident.id != incident_id).all()
+    all_incidents = [
+        candidate for candidate in candidates
+        if _is_historical_candidate(candidate, incident)
+    ]
+
+    # Sort deterministically: timestamp DESC, then incident ID ASC.
+    all_incidents.sort(key=lambda x: (x.timestamp or datetime.min, -x.id), reverse=True)
 
     # Count incidents by matching criteria, filtering valid keys
     same_service_incidents = [
@@ -93,6 +93,8 @@ def get_historical_intelligence(incident_id: int, db: Session) -> dict[str, Any]
             "same_root_cause_count": len(same_root_cause_incidents),
             "same_anomaly_count": len(same_anomaly_incidents),
             "most_frequently_recorded_recommendation": most_common_recommendation,
+            # Preserve the original response name for existing consumers.
+            "most_common_recommendation": most_common_recommendation,
             "most_affected_service": most_affected_service,
             "root_cause_seen_before": len(same_root_cause_incidents) > 0,
             "similar_incidents_available": len(similar_incidents) > 0,
@@ -110,6 +112,26 @@ def _is_valid_key(value: str | None) -> bool:
     This prevents false matches from blank/missing data in legacy incidents.
     """
     return value is not None and isinstance(value, str) and value.strip() != ""
+
+
+def _is_historical_candidate(candidate: Incident, current: Incident) -> bool:
+    """Apply the timestamp boundary while preserving same-batch history."""
+    candidate_time = candidate.timestamp
+    current_time = current.timestamp
+    # Legacy incidents without persisted diagnostic evidence can predate the
+    # current clock context. Keep them eligible to analyze newer evidence-
+    # backed history rather than treating the missing snapshot as a filter.
+    if current.evidence_snapshot is None and candidate.evidence_snapshot is not None:
+        return True
+    if candidate_time is None:
+        return current_time is None or candidate.id < current.id
+    if current_time is None:
+        return candidate.id < current.id
+    if candidate_time < current_time:
+        return True
+    if candidate_time == current_time:
+        return False
+    return candidate.id > current.id and candidate_time - current_time <= timedelta(seconds=1)
 
 
 def _find_similar_incidents(
@@ -141,7 +163,13 @@ def _find_similar_incidents(
             and inc.root_cause == current.root_cause
         ]
         if priority1:
-            return priority1[:5]
+            blank_service_priority3 = [
+                inc for inc in all_incidents
+                if not _is_valid_key(inc.service_name)
+                and _is_valid_key(inc.root_cause)
+                and inc.root_cause == current.root_cause
+            ]
+            return (priority1 + blank_service_priority3)[:5]
 
     # Priority 2: same service + same anomaly type
     if service_valid and anomaly_valid:

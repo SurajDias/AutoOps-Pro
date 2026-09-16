@@ -19,6 +19,7 @@ from app.models.simulator import WhatIfSimulator
 from app.models.trend_analytics import trend_engine
 from app.database.postgres import create_incident_record, find_similar_incident
 from app.services.health_service import update_service_health
+from app.services.telemetry_service import collect_incident_telemetry_snapshot
 
 router   = APIRouter()
 history  = []
@@ -220,6 +221,7 @@ def _record_incident_if_needed(
             "estimated_failure_window": timeline.get("time_to_failure"),
             "dependency_service_id": dependency_service_id,
         },
+        "telemetry_snapshot": collect_incident_telemetry_snapshot(),
     })
     if not created:
         logger.error("Unable to persist automatic incident for active high-severity condition")
