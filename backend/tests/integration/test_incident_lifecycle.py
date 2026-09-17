@@ -1,5 +1,6 @@
 """Incident lifecycle integration coverage against the isolated PostgreSQL DB."""
 
+import json
 from collections.abc import Callable
 from datetime import datetime
 
@@ -8,10 +9,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
+from app.api import incident_api
 from app.database.models import Incident
 from app.database.postgres import get_db
 from app.main import app
 from app.routes import system
+from app.services import telemetry_service
 
 
 ROOT_CAUSE = "High CPU + High Memory + Slow Response + High Errors"
@@ -81,6 +84,136 @@ def _statistics(client):
     response = client.get("/incidents/statistics")
     assert response.status_code == 200
     return response.json()
+
+
+def test_incident_telemetry_snapshot_persists_and_is_returned_safely(client, monkeypatch):
+    """Verify the persisted telemetry JSONB contract through the HTTP API."""
+    monkeypatch.setattr(telemetry_service, "get_system_telemetry", lambda: {
+        "os_name": "Linux",
+        "os_release": "test",
+        "architecture": "x86_64",
+        "cpu_logical_cores": 4,
+        "memory_usage_percent": 88.0,
+        "hostname": "must-not-be-captured",
+        "environment": "secret",
+        "path": "/private/path",
+    })
+    monkeypatch.setattr(telemetry_service, "get_network_interfaces_telemetry", lambda: [{
+        "name": "eth0",
+        "is_up": True,
+        "speed_mbps": 1000,
+        "mtu": 1500,
+        "addresses": [{"address": "192.0.2.10"}],
+        "remote_endpoint": "203.0.113.10",
+        "path": "/private/path",
+    }])
+    monkeypatch.setattr(telemetry_service, "get_listening_ports_telemetry", lambda: [{
+        "protocol": "TCP",
+        "local_address": "0.0.0.0",
+        "local_port": 8080,
+        "remote_endpoint": "203.0.113.10",
+        "pid": 123,
+    }, {
+        "protocol": "UDP",
+        "local_address": "127.0.0.1",
+        "local_port": 5353,
+        "raw_record": "must-not-be-captured",
+    }])
+    monkeypatch.setattr(telemetry_service, "get_processes_telemetry", lambda: [{
+        "pid": 123,
+        "name": "worker",
+        "status": "running",
+        "cpu_percent": 92.0,
+        "memory_percent": 12.0,
+        "memory_rss_bytes": 2048,
+        "cmdline": "secret --token=x",
+        "executable_path": "/private/bin/worker",
+        "environment": {"TOKEN": "x"},
+    }])
+
+    response = client.post("/incidents/", json={
+        "service_name": "api-gateway",
+        "severity": "High",
+        "anomaly_type": "CPU saturation",
+        "root_cause": "High CPU",
+        "recommendation": "Review worker load",
+    })
+    assert response.status_code == 200
+    incident_id = response.json()["incident_id"]
+
+    detail = client.get(f"/incidents/{incident_id}")
+    assert detail.status_code == 200
+    snapshot = detail.json()["telemetry_snapshot"]
+    assert snapshot is not None
+    assert set(snapshot) == {
+        "captured_at",
+        "system",
+        "network_interfaces",
+        "listening_ports",
+        "processes",
+        "risk_signals",
+        "limitations",
+    }
+    assert isinstance(snapshot["captured_at"], str)
+    assert snapshot["captured_at"].endswith("+00:00")
+    datetime.fromisoformat(snapshot["captured_at"])
+    assert snapshot["system"] == {
+        "os_name": "Linux",
+        "os_release": "test",
+        "architecture": "x86_64",
+        "cpu_logical_cores": 4,
+        "memory_usage_percent": 88.0,
+    }
+    assert snapshot["network_interfaces"] == [{
+        "name": "eth0",
+        "is_up": True,
+        "speed_mbps": 1000,
+        "mtu": 1500,
+        "address_count": 1,
+    }]
+    assert snapshot["listening_ports"] == {
+        "count": 2,
+        "tcp_count": 1,
+        "udp_count": 1,
+        "non_loopback_count": 1,
+    }
+    assert snapshot["processes"] == {
+        "count": 1,
+        "status_counts": {"running": 1},
+        "cpu_percent_available": True,
+        "max_cpu_percent": 92.0,
+        "max_memory_percent": 12.0,
+        "total_memory_rss_bytes": 2048,
+        "at_collector_limit": False,
+    }
+    assert snapshot["risk_signals"]
+    signal_ids = {signal["signal_id"] for signal in snapshot["risk_signals"]}
+    assert {"high-memory-utilization", "high-process-cpu"} <= signal_ids
+    assert snapshot["limitations"] == []
+
+    serialized = json.dumps(snapshot).lower()
+    for forbidden in (
+        "pid", "cmdline", "environment", "executable_path", "remote_endpoint",
+        "token", "private", "192.0.2.10", "203.0.113.10", "raw_record",
+        "local_port",
+    ):
+        assert forbidden not in serialized
+
+    # A legacy row may have no telemetry snapshot; the nullable JSONB column
+    # must remain readable through the same detail endpoint.
+    monkeypatch.setattr(incident_api, "collect_incident_telemetry_snapshot", lambda: None)
+    legacy = client.post("/incidents/", json={
+        "service_name": "legacy-service",
+        "severity": "Low",
+        "anomaly_type": "Legacy record",
+        "root_cause": "Legacy cause",
+        "recommendation": "Monitor",
+    })
+    assert legacy.status_code == 200
+
+    legacy_detail = client.get(f"/incidents/{legacy.json()['incident_id']}")
+    assert legacy_detail.status_code == 200
+    assert legacy_detail.json()["telemetry_snapshot"] is None
 
 
 def test_incident_creation_and_listing(client, trigger_condition):
