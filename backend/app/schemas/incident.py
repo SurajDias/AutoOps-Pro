@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # These are the only lifecycle states implemented by the incident API and UI.
@@ -74,3 +74,145 @@ class HistoricalIntelligence(BaseModel):
 class IncidentFeedbackCreate(BaseModel):
     status: Literal["accepted", "rejected"]
     reason: str | None = Field(default=None, max_length=1000)
+
+
+class RecommendationExecutionCreate(BaseModel):
+    """Create a recommendation execution record."""
+
+    incident_id: int
+    recommendation: str
+    execution_start: str
+    execution_end: str
+    outcome: str
+    notes: str | None = None
+
+
+class RecommendationExecutionResponse(BaseModel):
+    """Response for a recommendation execution record."""
+
+    id: int
+    incident_id: int
+    recommendation: str
+    execution_start: str
+    execution_end: str
+    outcome: str
+    notes: str | None = None
+
+
+class RecommendationOutcomeAssessment(BaseModel):
+    """Assessment of a recommendation execution."""
+
+    incident_id: int
+    recommendation: str
+    outcome: str
+    notes: str | None = None
+
+
+ExecutionStatus = Literal[
+    "PLANNED",
+    "ACCEPTED",
+    "EXECUTING",
+    "EXECUTED",
+    "FAILED",
+    "CANCELLED",
+]
+
+OutcomeStatus = Literal[
+    "IMPROVED",
+    "NO_CHANGE",
+    "DEGRADED",
+    "INCONCLUSIVE",
+    "UNKNOWN",
+]
+
+OutcomeAssessedBy = Literal["AUTOMATED", "OPERATOR", "EXTERNAL"]
+
+
+class ExecutionCreate(BaseModel):
+    recommendation: str = Field(..., min_length=1, max_length=2000)
+    execution_method: str | None = Field(default=None, max_length=255)
+    actor: str | None = Field(default=None, max_length=255)
+
+    @field_validator("recommendation", "execution_method", "actor")
+    @classmethod
+    def _validate_nonempty_string(cls, value: str | None):
+        if value is None:
+            return value
+        trimmed = value.strip()
+        if trimmed == "":
+            raise ValueError("must not be blank")
+        return trimmed
+
+
+class ExecutionFailureCreate(BaseModel):
+    error_code: str | None = Field(default=None, max_length=255)
+    error_message: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("error_code", "error_message")
+    @classmethod
+    def _validate_failure_text(cls, value: str | None):
+        if value is None:
+            return value
+        trimmed = value.strip()
+        if trimmed == "":
+            raise ValueError("must not be blank")
+        return trimmed
+
+
+class ExecutionOutcomeCreate(BaseModel):
+    outcome_status: OutcomeStatus
+    outcome_assessed_by: OutcomeAssessedBy
+
+
+class ExecutionResponse(BaseModel):
+    id: int
+    incident_id: int
+    recommendation: str
+    execution_status: ExecutionStatus
+    execution_method: str | None = None
+    actor: str | None = None
+    attempt_number: int
+    started_at: str | None = None
+    completed_at: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    outcome_status: OutcomeStatus | None = None
+    outcome_assessed_by: OutcomeAssessedBy | None = None
+    outcome_assessed_at: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class InvestigationIncidentDetails(BaseModel):
+    """Persisted incident fields included in an investigation summary."""
+
+    id: int
+    service_name: str
+    severity: str
+    anomaly_type: str
+    root_cause: str
+    recommendation: str
+    status: IncidentStatus
+    timestamp: str | None = None
+    resolved_at: str | None = None
+    evidence_snapshot: dict[str, Any] | None = None
+
+
+class InvestigationTimelineEvent(BaseModel):
+    timestamp: str | None = None
+    event_type: str
+    title: str
+    description: str
+
+
+class InvestigationSummary(BaseModel):
+    """Read-only, fact-bounded composition of incident investigation data."""
+
+    incident: InvestigationIncidentDetails
+    telemetry_snapshot: dict[str, Any] | None = None
+    historical_intelligence: HistoricalIntelligence | None = None
+    recommendation_explanation: dict[str, Any] | None = None
+    operator_feedback: dict[str, Any] | None = None
+    executions: list[ExecutionResponse]
+    timeline: list[InvestigationTimelineEvent]
+    limitations: list[str]

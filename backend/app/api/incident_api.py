@@ -16,6 +16,7 @@ from app.schemas.incident import (
     IncidentFeedbackCreate,
     IncidentUpdate,
     HistoricalIntelligence,
+    InvestigationSummary,
 )
 from app.services.historical_intelligence import get_historical_intelligence
 from app.services.telemetry_service import collect_incident_telemetry_snapshot
@@ -309,6 +310,71 @@ def get_incident_intelligence(incident_id: int, db: Session = Depends(get_db)):
         return HistoricalIntelligence(**intelligence)
     except SQLAlchemyError as error:
         raise _database_unavailable(error) from error
+
+
+@router.get("/{incident_id}/investigation-summary", response_model=InvestigationSummary)
+def get_investigation_summary(incident_id: int, db: Session = Depends(get_db)):
+    """Compose persisted incident facts and read-only investigation context."""
+    try:
+        incident = db.query(Incident).filter(Incident.id == incident_id).first()
+    except SQLAlchemyError as error:
+        raise _database_unavailable(error) from error
+    if incident is None:
+        raise HTTPException(404, "Incident not found")
+
+    try:
+        historical_intelligence = HistoricalIntelligence(
+            **get_historical_intelligence(incident_id, db)
+        )
+        executions = (
+            db.query(RecommendationExecution)
+            .filter(RecommendationExecution.incident_id == incident_id)
+            .order_by(
+                RecommendationExecution.attempt_number.desc(),
+                RecommendationExecution.id.desc(),
+            )
+            .all()
+        )
+    except SQLAlchemyError as error:
+        raise _database_unavailable(error) from error
+
+    recommendation_explanation = _recorded_recommendation_explanation(incident)
+    operator_feedback = _operator_feedback_for(incident)
+    telemetry_snapshot = incident.telemetry_snapshot
+    limitations = list((telemetry_snapshot or {}).get("limitations") or [])
+    if telemetry_snapshot is None:
+        limitations.append("Telemetry snapshot was not captured for this incident.")
+    if incident.evidence_snapshot is None:
+        limitations.append("Historical evidence was not captured for this incident.")
+    if recommendation_explanation is None:
+        limitations.append("Recommendation explanation is not available in the persisted incident record.")
+    if operator_feedback is None:
+        limitations.append("Operator feedback has not been recorded for this incident.")
+    if not executions:
+        limitations.append("No recommendation execution records are available for this incident.")
+
+    incident_details = {
+        "id": incident.id,
+        "service_name": incident.service_name,
+        "severity": incident.severity,
+        "anomaly_type": incident.anomaly_type,
+        "root_cause": incident.root_cause,
+        "recommendation": incident.recommendation,
+        "status": incident.status,
+        "timestamp": _iso_timestamp(incident.timestamp),
+        "resolved_at": _iso_timestamp(incident.resolved_at),
+        "evidence_snapshot": incident.evidence_snapshot,
+    }
+    return InvestigationSummary(
+        incident=incident_details,
+        telemetry_snapshot=telemetry_snapshot,
+        historical_intelligence=historical_intelligence,
+        recommendation_explanation=recommendation_explanation,
+        operator_feedback=operator_feedback,
+        executions=[_execution_response_payload(item) for item in executions],
+        timeline=_timeline_for(incident),
+        limitations=sorted(set(limitations)),
+    )
 
 
 @router.put("/{incident_id}")
