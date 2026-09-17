@@ -5,11 +5,14 @@ import { api, type HistoricalIntelligence } from '../../services/api';
 export default function HistoricalIncidentIntelligence({
   incidentId,
   onSelectPreviousIncident,
+  data,
 }: {
   incidentId: number;
   onSelectPreviousIncident: (id: number) => void;
+  data?: HistoricalIntelligence | null;
 }) {
-  const [intelligence, setIntelligence] = useState<HistoricalIntelligence | null>(null);
+  const usesProvidedData = data !== undefined;
+  const [intelligence, setIntelligence] = useState<HistoricalIntelligence | null>(data ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,8 +31,14 @@ export default function HistoricalIncidentIntelligence({
   }, [incidentId]);
 
   useEffect(() => {
+    if (usesProvidedData) {
+      setIntelligence(data ?? null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     void load();
-  }, [load]);
+  }, [data, load, usesProvidedData]);
 
   if (loading) {
     return (
@@ -61,7 +70,12 @@ export default function HistoricalIncidentIntelligence({
   }
 
   if (!intelligence) {
-    return null;
+    return (
+      <section className="rounded-2xl border border-white/[.08] bg-surface/80 p-5">
+        <p className="text-[10px] uppercase tracking-[.2em] text-primary">Historical incident intelligence</p>
+        <p className="mt-3 text-sm text-white">No historical intelligence was recorded for this incident.</p>
+      </section>
+    );
   }
 
   const { historical_summary, similar_incidents } = intelligence;

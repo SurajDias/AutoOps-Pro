@@ -81,6 +81,17 @@ export interface IncidentPatterns { most_common_root_cause: string | null; most_
 export interface HistoricalIncidentData { id: number; service_name: string; severity: string; anomaly_type: string; root_cause: string; recommendation: string; status: IncidentStatus; timestamp: string | null; resolved_at: string | null; incident_duration: string | null; }
 export interface HistoricalSummary { same_service_count: number; same_root_cause_count: number; same_anomaly_count: number; most_frequently_recorded_recommendation: string | null; most_affected_service: string | null; root_cause_seen_before: boolean; similar_incidents_available: boolean; }
 export interface HistoricalIntelligence { incident_id: number; historical_summary: HistoricalSummary; similar_incidents: HistoricalIncidentData[]; }
+export interface InvestigationIncident extends Omit<Incident, 'timestamp'> { timestamp: string | null; resolved_at?: string | null; evidence_snapshot?: IncidentEvidenceSnapshot | null; }
+export interface InvestigationSummary {
+  incident: InvestigationIncident;
+  telemetry_snapshot: IncidentTelemetrySnapshot | null;
+  historical_intelligence: HistoricalIntelligence | null;
+  recommendation_explanation: RecommendationExplanation | null;
+  operator_feedback: OperatorFeedback | null;
+  executions: RecommendationExecution[];
+  timeline: IncidentTimelineEvent[];
+  limitations: string[];
+}
 export interface Topology { nodes: Array<{ id: string; label: string }>; edges: Array<{ source: string; target: string }>; }
 export type ServiceHealth = Record<string, 'healthy' | 'degraded' | 'failed'>;
 export interface DependencyImpactService { service_id: string; label: string; depth: number; dependency_path: string[]; }
@@ -171,6 +182,7 @@ export const api = {
   getIncidentStatistics: (signal?: AbortSignal) => request<IncidentStatistics>('/incidents/statistics', {}, signal), getIncidentPatterns: (signal?: AbortSignal) => request<IncidentPatterns>('/incidents/patterns', {}, signal),
   searchIncidents: (filters: { service_name?: string; root_cause?: string; severity?: string }, signal?: AbortSignal) => { const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value) as [string, string][]); return request<{ total_matches: number; incidents: Incident[] }>(`/incidents/search${params.size ? `?${params}` : ''}`, {}, signal); },
   getIncident: (id: number, signal?: AbortSignal) => request<IncidentDetail>(`/incidents/${id}`, {}, signal), updateIncident: (id: number, status: IncidentStatus, signal?: AbortSignal) => request<{ message: string; incident: Incident }>(`/incidents/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }, signal),
+  getIncidentInvestigationSummary: (id: number, signal?: AbortSignal) => request<InvestigationSummary>(`/incidents/${id}/investigation-summary`, {}, signal),
   getIncidentReport: async (id: number, signal?: AbortSignal) => normalizeIncidentReport(await request<IncidentReportResponse>(`/incidents/${id}/report`, {}, signal)),
   getIncidentIntelligence: (id: number, signal?: AbortSignal) => request<HistoricalIntelligence>(`/incidents/${id}/intelligence`, {}, signal),
   submitIncidentFeedback: (id: number, feedback: { status: OperatorFeedback['status']; reason?: string }, signal?: AbortSignal) => request<{ message: string; operator_feedback: OperatorFeedback }>(`/incidents/${id}/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(feedback) }, signal),

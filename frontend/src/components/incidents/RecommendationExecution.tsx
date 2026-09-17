@@ -31,9 +31,10 @@ const outcomeMeta: Record<OutcomeStatus, string> = {
 
 const defaultOutcome: Record<string, { outcome_status: OutcomeStatus; outcome_assessed_by: OutcomeAssessedBy }> = {};
 
-export default function RecommendationExecutionPanel({ incidentId, recommendation }: { incidentId: number; recommendation: string }) {
-  const [executions, setExecutions] = useState<RecommendationExecution[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function RecommendationExecutionPanel({ incidentId, recommendation, summaryExecutions, onExecutionsChanged }: { incidentId: number; recommendation: string; summaryExecutions?: RecommendationExecution[]; onExecutionsChanged?: () => Promise<void> }) {
+  const usesProvidedData = summaryExecutions !== undefined;
+  const [executions, setExecutions] = useState<RecommendationExecution[]>(summaryExecutions ?? []);
+  const [loading, setLoading] = useState(!usesProvidedData);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [busyExecutionId, setBusyExecutionId] = useState<number | null>(null);
@@ -43,6 +44,10 @@ export default function RecommendationExecutionPanel({ incidentId, recommendatio
   const [outcomes, setOutcomes] = useState<Record<string, { outcome_status: OutcomeStatus; outcome_assessed_by: OutcomeAssessedBy }>>(defaultOutcome);
 
   const refreshExecutions = useCallback(async () => {
+    if (onExecutionsChanged) {
+      await onExecutionsChanged();
+      return;
+    }
     try {
       const response = await api.getExecutions(incidentId);
       setExecutions(response.executions);
@@ -50,9 +55,15 @@ export default function RecommendationExecutionPanel({ incidentId, recommendatio
     } catch (requestError) {
       setError(describeApiError(requestError, 'Recommendation execution record is unavailable.'));
     }
-  }, [incidentId]);
+  }, [incidentId, onExecutionsChanged]);
 
   useEffect(() => {
+    if (usesProvidedData) {
+      setExecutions(summaryExecutions ?? []);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     let active = true;
     const load = async () => {
       setLoading(true);
@@ -70,7 +81,7 @@ export default function RecommendationExecutionPanel({ incidentId, recommendatio
     };
     void load();
     return () => { active = false; };
-  }, [incidentId]);
+  }, [incidentId, summaryExecutions, usesProvidedData]);
 
   const latestExecution = useMemo(() => executions[0] ?? null, [executions]);
 
