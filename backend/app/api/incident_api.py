@@ -147,8 +147,11 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/")
-def home():
-    return {"message": "Incident Management API is working!"}
+def home(db: Session = Depends(get_db)):
+    try:
+        return db.query(Incident).all()
+    except SQLAlchemyError as error:
+        raise _database_unavailable(error) from error
 
 
 @router.post("/")

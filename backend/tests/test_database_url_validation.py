@@ -1,8 +1,17 @@
 """Safety checks for destructive PostgreSQL integration-test fixtures."""
 
 import pytest
+from pathlib import Path
 
 from app.database.postgres import validate_test_database_url
+
+
+def test_local_backend_launcher_applies_alembic_before_serving():
+    launcher = Path(__file__).parents[2] / "scripts" / "start_backend.sh"
+    contents = launcher.read_text()
+
+    assert 'alembic" -c "$PROJECT_ROOT/alembic.ini" upgrade head' in contents
+    assert contents.index("upgrade head") < contents.index("exec \"$PROJECT_ROOT/.venv/bin/uvicorn\"")
 
 
 @pytest.mark.parametrize("database_name", ["autoops_test", "autoops_ci"])

@@ -95,6 +95,8 @@ Incident schema changes are managed with Alembic. Run the following before start
 
 Alembic reads only `DATABASE_URL`; `TEST_DATABASE_URL` remains reserved for the isolated pytest fixtures. The initial baseline creates `incidents` on a fresh database. For an existing deployment, it verifies that the expected incident columns exist and records the revision without dropping, recreating, or modifying incident rows. Do not run `alembic downgrade` against production; the baseline deliberately refuses destructive downgrades.
 
+`scripts/start_backend.sh` runs `alembic upgrade head` before starting Uvicorn, so a normal local backend start cannot serve ORM code against an older incident schema. Tests must set `TEST_DATABASE_URL` to `autoops_test` or `autoops_ci`; they never use `DATABASE_URL`.
+
 ## Panel-ready capability boundaries
 
 - Observation: live mode reads host-level metrics through the backend; demo mode uses controlled synthetic scenarios and provides metric history.
@@ -121,9 +123,7 @@ This is a functional prototype, not a production AIOps system:
 
 ```bash
 # Backend
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+./scripts/start_backend.sh
 
 # Frontend
 cd frontend

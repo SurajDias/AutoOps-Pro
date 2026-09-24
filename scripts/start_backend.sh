@@ -9,5 +9,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+cd "$PROJECT_ROOT"
+"$PROJECT_ROOT/.venv/bin/alembic" -c "$PROJECT_ROOT/alembic.ini" upgrade head
 cd "$PROJECT_ROOT/backend"
 exec "$PROJECT_ROOT/.venv/bin/uvicorn" app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --env-file "$ENV_FILE"
